@@ -1,40 +1,90 @@
 # TWNetOptimizer
 
-TWNetOptimizer is a Paper 1.20.4 / Java 17 network and server profiler with conservative safe optimization for long-distance Minecraft servers.
+TWNetOptimizer is a conservative Paper 1.20.4 / Java 17 packet profiler and network optimizer.
 
-## v0.5 Latency Guardian
+## v0.6 Conservative State Cache
 
-Latency Guardian protects gameplay responsiveness without inventing an unsafe custom packet queue.
+v0.6 focuses on improving safety and optimizer overhead rather than dropping more packet categories.
 
-Critical client input includes player movement packets and INTERACT_ENTITY attacks.
+### Low-allocation metadata dedupe
 
-TWNetOptimizer never cancels or throttles those receive packets.
+ENTITY_METADATA comparison now reads the PacketEvents buffer directly against the last forwarded payload.
 
-A real attack activates COMBAT mode for a configurable window.
+Repeated duplicate metadata no longer needs a fresh byte array allocation on every packet.
 
-During COMBAT mode movement, attack, teleport, velocity, inventory, chunk/world consistency, block state and KeepAlive remain untouched.
+A payload copy is only stored when a packet is actually allowed through and reaches the MONITOR stage.
 
-Only low-value cosmetic particle allowance becomes stricter.
+This is especially useful on servers producing thousands of identical metadata packets per second.
 
-Default particle limits are 500 per second in normal mode, 150 under pressure and 100 in combat.
+### Final-forwarded cache semantics
 
-Pressure mode activates when final forwarded traffic is already bursting or sampled main-thread handoff p95 crosses the configured threshold.
+Metadata and UI state are committed to cache only from the final MONITOR listener after the packet remains uncancelled.
 
-Use:
+This makes the cache represent what was actually forwarded rather than what TWNetOptimizer merely intended to forward.
 
-    /netdebug latency <player>
+### UI changed-only state
 
-It reports ping, priority mode, current movement/attack input counts, sampled Netty-arrival to Bukkit-main-thread handoff, raw/forwarded outbound traffic and packet reduction.
+Persistent UI dedupe is now keyed by logical target instead of by a recently seen payload set.
 
-Handoff latency is not exact attack resolution time. It is a scheduler diagnostic for separating network RTT from server-side main-thread availability.
+Tracked targets include:
 
-Other useful commands:
+- BossBar UUID
+- Scoreboard objective name
+- score entry + objective
+- display scoreboard slot
+- team name
+- player-list header/footer
+
+For each target, only an exact repeat of the current client state is suppressed.
+
+A state transition such as 100 -> 101 -> 100 is forwarded correctly.
+
+Unchanged state is still periodically refreshed.
+
+### Netty backpressure observation
+
+Latency Guardian now samples the existing Netty channel writability state.
+
+TWNetOptimizer does not alter Netty watermarks or TCP behavior.
+
+If the channel reports unwritable, the player enters PRESSURE mode and /netdebug latency shows the observed channel state.
+
+### Conservative defaults
+
+For new installations:
+
+- metadata dedupe: ON
+- UI changed-only dedupe: ON
+- particle throttle: OFF
+- Latency Guardian: ON
+- movement/attack filtering: NEVER
+- teleport/velocity filtering: NEVER
+- chunk/world consistency filtering: NEVER
+- inventory/ack filtering: NEVER
+- KeepAlive filtering: NEVER
+
+Existing server config files are not forcibly overwritten.
+
+### Intentionally not enabled yet
+
+v0.6 does not enable:
+
+- field-level metadata rewriting
+- same-tick last-value-wins coalescing
+- teleport coalescing
+- velocity coalescing
+- custom packet reordering
+
+Those mechanisms are more invasive and should only be considered after broader compatibility testing.
+
+Useful commands:
 
     /netdebug <player>
-    /netdebug virtual <player>
+    /netdebug latency <player>
     /netdebug trace <player> 10
     /netdebug entities <player>
+    /netdebug virtual <player>
     /netdebug server
     /netdebug advice
 
-TWNetOptimizer cannot reduce the physical Taiwan to US West RTT. Latency Guardian reduces avoidable local pressure around critical gameplay traffic and exposes server-side handoff delay.
+TWNetOptimizer cannot reduce physical network RTT. Its purpose is to reduce redundant traffic, expose packet pressure, and protect gameplay correctness first.

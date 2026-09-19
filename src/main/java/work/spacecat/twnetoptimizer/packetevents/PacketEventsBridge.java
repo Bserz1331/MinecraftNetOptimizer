@@ -43,7 +43,9 @@ public final class PacketEventsBridge {
     }
 
     public void register() {
-        if (optimizingListener != null || monitorListener != null) return;
+        if (optimizingListener != null || monitorListener != null) {
+            return;
+        }
 
         optimizingListener = PacketEvents.getAPI()
                 .getEventManager()
@@ -56,12 +58,16 @@ public final class PacketEventsBridge {
 
     public void unregister() {
         if (optimizingListener != null) {
-            PacketEvents.getAPI().getEventManager().unregisterListener(optimizingListener);
+            PacketEvents.getAPI()
+                    .getEventManager()
+                    .unregisterListener(optimizingListener);
             optimizingListener = null;
         }
 
         if (monitorListener != null) {
-            PacketEvents.getAPI().getEventManager().unregisterListener(monitorListener);
+            PacketEvents.getAPI()
+                    .getEventManager()
+                    .unregisterListener(monitorListener);
             monitorListener = null;
         }
     }
@@ -74,42 +80,72 @@ public final class PacketEventsBridge {
         @Override
         public void onPacketReceive(PacketReceiveEvent event) {
             if (event.getPlayer() instanceof Player player) {
-                latencyGuardian.observeInbound(player.getUniqueId(), event);
+                latencyGuardian.observeInbound(
+                        player.getUniqueId(),
+                        event
+                );
             }
         }
 
         @Override
         public void onPacketSend(PacketSendEvent event) {
-            if (!(event.getPlayer() instanceof Player player)) return;
+            if (!(event.getPlayer() instanceof Player player)) {
+                return;
+            }
 
             UUID playerId = player.getUniqueId();
             String packetName = event.getPacketName();
             int observedBytes = readableBytes(event.getByteBuf());
 
-            profiler.recordRawOutbound(playerId, observedBytes, packetName);
+            latencyGuardian.observeOutbound(
+                    playerId,
+                    event.getChannel()
+            );
 
-            if (event.isCancelled()) return;
+            profiler.recordRawOutbound(
+                    playerId,
+                    observedBytes,
+                    packetName
+            );
+
+            if (event.isCancelled()) {
+                return;
+            }
 
             long now = System.currentTimeMillis();
 
             switch (packetName) {
-                case "ENTITY_METADATA" -> handleMetadata(event, playerId, now);
+                case "ENTITY_METADATA" ->
+                        handleMetadata(event, playerId, now);
+
                 case "ENTITY_TELEPORT", "ENTITY_VELOCITY" ->
-                        observeEntityActivity(event, playerId, packetName);
+                        observeEntityActivity(
+                                event,
+                                playerId,
+                                packetName
+                        );
+
                 case "PARTICLE" -> {
-                    if (optimizer.shouldSuppressParticle(playerId, now)) {
+                    if (optimizer.shouldSuppressParticle(
+                            playerId,
+                            now
+                    )) {
                         event.setCancelled(true);
                     }
                 }
+
                 default -> {
                     if (optimizer.isUiStatePacket(packetName)) {
-                        byte[] payload = copyPayload(event.getByteBuf());
+                        String stateKey = UiStateKeyResolver.resolve(
+                                packetName,
+                                event.getByteBuf()
+                        );
 
-                        if (payload.length > 0
+                        if (stateKey != null
                                 && optimizer.shouldSuppressUi(
                                 playerId,
-                                packetName,
-                                payload,
+                                stateKey,
+                                event.getByteBuf(),
                                 now
                         )) {
                             event.setCancelled(true);
@@ -119,19 +155,37 @@ public final class PacketEventsBridge {
             }
         }
 
-        private void handleMetadata(PacketSendEvent event, UUID playerId, long now) {
-            byte[] payload = copyPayload(event.getByteBuf());
+        private void handleMetadata(
+                PacketSendEvent event,
+                UUID playerId,
+                long now
+        ) {
             int entityId = readFirstVarInt(event.getByteBuf());
 
-            if (entityId < 0 || payload.length == 0) return;
-
-            virtualEntityRegistry.recordActivity(playerId, entityId, "ENTITY_METADATA");
-
-            if (traceService.isActive(playerId)) {
-                traceService.record(playerId, entityId, "ENTITY_METADATA");
+            if (entityId < 0) {
+                return;
             }
 
-            if (optimizer.shouldSuppressMetadata(playerId, entityId, payload, now)) {
+            virtualEntityRegistry.recordActivity(
+                    playerId,
+                    entityId,
+                    "ENTITY_METADATA"
+            );
+
+            if (traceService.isActive(playerId)) {
+                traceService.record(
+                        playerId,
+                        entityId,
+                        "ENTITY_METADATA"
+                );
+            }
+
+            if (optimizer.shouldSuppressMetadata(
+                    playerId,
+                    entityId,
+                    event.getByteBuf(),
+                    now
+            )) {
                 event.setCancelled(true);
             }
         }
@@ -142,12 +196,23 @@ public final class PacketEventsBridge {
                 String packetName
         ) {
             int entityId = readFirstVarInt(event.getByteBuf());
-            if (entityId < 0) return;
 
-            virtualEntityRegistry.recordActivity(playerId, entityId, packetName);
+            if (entityId < 0) {
+                return;
+            }
+
+            virtualEntityRegistry.recordActivity(
+                    playerId,
+                    entityId,
+                    packetName
+            );
 
             if (traceService.isActive(playerId)) {
-                traceService.record(playerId, entityId, packetName);
+                traceService.record(
+                        playerId,
+                        entityId,
+                        packetName
+                );
             }
         }
     }
@@ -173,43 +238,92 @@ public final class PacketEventsBridge {
 
         @Override
         public void onPacketSend(PacketSendEvent event) {
-            if (!(event.getPlayer() instanceof Player player) || event.isCancelled()) {
+            if (!(event.getPlayer() instanceof Player player)
+                    || event.isCancelled()) {
                 return;
             }
 
             UUID playerId = player.getUniqueId();
+            String packetName = event.getPacketName();
+            long now = System.currentTimeMillis();
 
             profiler.recordForwardedOutbound(
                     playerId,
                     readableBytes(event.getByteBuf()),
-                    event.getPacketName()
+                    packetName
             );
 
-            switch (event.getPacketName()) {
-                case "SPAWN_ENTITY" -> recordSpawnEntity(event, playerId);
-                case "SPAWN_PLAYER" -> recordSpawnPlayer(event, playerId);
-                case "SPAWN_EXPERIENCE_ORB" -> recordSpawnExperienceOrb(event, playerId);
-                case "DESTROY_ENTITIES" -> handleDestroy(event, playerId);
+            if ("ENTITY_METADATA".equals(packetName)) {
+                int entityId = readFirstVarInt(event.getByteBuf());
+
+                if (entityId >= 0) {
+                    optimizer.commitMetadata(
+                            playerId,
+                            entityId,
+                            event.getByteBuf(),
+                            now
+                    );
+                }
+            } else if (optimizer.isUiStatePacket(packetName)) {
+                String stateKey = UiStateKeyResolver.resolve(
+                        packetName,
+                        event.getByteBuf()
+                );
+
+                if (stateKey != null) {
+                    optimizer.commitUi(
+                            playerId,
+                            stateKey,
+                            event.getByteBuf(),
+                            now
+                    );
+                }
+            }
+
+            switch (packetName) {
+                case "SPAWN_ENTITY" ->
+                        recordSpawnEntity(event, playerId);
+
+                case "SPAWN_PLAYER" ->
+                        recordSpawnPlayer(event, playerId);
+
+                case "SPAWN_EXPERIENCE_ORB" ->
+                        recordSpawnExperienceOrb(
+                                event,
+                                playerId
+                        );
+
+                case "DESTROY_ENTITIES" ->
+                        handleDestroy(event, playerId);
+
                 case "RESPAWN", "JOIN_GAME" -> {
                     optimizer.clearPlayer(playerId);
                     virtualEntityRegistry.clearPlayer(playerId);
                 }
+
                 default -> {
                 }
             }
         }
 
-        private void recordSpawnEntity(PacketSendEvent event, UUID playerId) {
+        private void recordSpawnEntity(
+                PacketSendEvent event,
+                UUID playerId
+        ) {
             try {
-                Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
-                int entityId = ByteBufHelper.readVarInt(duplicate);
+                Object duplicate =
+                        ByteBufHelper.duplicate(event.getByteBuf());
+
+                int entityId =
+                        ByteBufHelper.readVarInt(duplicate);
 
                 UUID entityUuid = new UUID(
                         ByteBufHelper.readLong(duplicate),
                         ByteBufHelper.readLong(duplicate)
                 );
 
-                int typeId = ByteBufHelper.readVarInt(duplicate);
+                int typeId =
+                        ByteBufHelper.readVarInt(duplicate);
 
                 EntityType entityType = EntityTypes.getById(
                         event.getClientVersion(),
@@ -228,13 +342,20 @@ public final class PacketEventsBridge {
                         typeName
                 );
             } catch (RuntimeException ignored) {
+                // Diagnostics must never affect delivery.
             }
         }
 
-        private void recordSpawnPlayer(PacketSendEvent event, UUID playerId) {
+        private void recordSpawnPlayer(
+                PacketSendEvent event,
+                UUID playerId
+        ) {
             try {
-                Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
-                int entityId = ByteBufHelper.readVarInt(duplicate);
+                Object duplicate =
+                        ByteBufHelper.duplicate(event.getByteBuf());
+
+                int entityId =
+                        ByteBufHelper.readVarInt(duplicate);
 
                 UUID entityUuid = new UUID(
                         ByteBufHelper.readLong(duplicate),
@@ -249,11 +370,16 @@ public final class PacketEventsBridge {
                         "minecraft:player"
                 );
             } catch (RuntimeException ignored) {
+                // Diagnostics must never affect delivery.
             }
         }
 
-        private void recordSpawnExperienceOrb(PacketSendEvent event, UUID playerId) {
-            int entityId = readFirstVarInt(event.getByteBuf());
+        private void recordSpawnExperienceOrb(
+                PacketSendEvent event,
+                UUID playerId
+        ) {
+            int entityId =
+                    readFirstVarInt(event.getByteBuf());
 
             if (entityId >= 0) {
                 virtualEntityRegistry.recordSpawn(
@@ -266,15 +392,30 @@ public final class PacketEventsBridge {
             }
         }
 
-        private void handleDestroy(PacketSendEvent event, UUID playerId) {
+        private void handleDestroy(
+                PacketSendEvent event,
+                UUID playerId
+        ) {
             try {
-                Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
-                int count = ByteBufHelper.readVarInt(duplicate);
+                Object duplicate =
+                        ByteBufHelper.duplicate(event.getByteBuf());
+
+                int count =
+                        ByteBufHelper.readVarInt(duplicate);
 
                 for (int i = 0; i < count; i++) {
-                    int entityId = ByteBufHelper.readVarInt(duplicate);
-                    optimizer.clearEntity(playerId, entityId);
-                    virtualEntityRegistry.recordDestroy(playerId, entityId);
+                    int entityId =
+                            ByteBufHelper.readVarInt(duplicate);
+
+                    optimizer.clearEntity(
+                            playerId,
+                            entityId
+                    );
+
+                    virtualEntityRegistry.recordDestroy(
+                            playerId,
+                            entityId
+                    );
                 }
             } catch (RuntimeException ignored) {
                 optimizer.clearPlayer(playerId);
@@ -285,24 +426,20 @@ public final class PacketEventsBridge {
 
     private int readFirstVarInt(Object byteBuf) {
         try {
-            Object duplicate = ByteBufHelper.duplicate(byteBuf);
+            Object duplicate =
+                    ByteBufHelper.duplicate(byteBuf);
+
             return ByteBufHelper.readVarInt(duplicate);
         } catch (RuntimeException ignored) {
             return -1;
         }
     }
 
-    private byte[] copyPayload(Object byteBuf) {
-        try {
-            return ByteBufHelper.copyBytes(byteBuf);
-        } catch (RuntimeException ignored) {
-            return new byte[0];
-        }
-    }
-
     private int readableBytes(Object byteBuf) {
         try {
-            return byteBuf == null ? 0 : ByteBufHelper.readableBytes(byteBuf);
+            return byteBuf == null
+                    ? 0
+                    : ByteBufHelper.readableBytes(byteBuf);
         } catch (RuntimeException ignored) {
             return 0;
         }
