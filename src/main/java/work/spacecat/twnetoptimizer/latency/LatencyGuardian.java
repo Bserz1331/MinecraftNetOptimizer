@@ -98,6 +98,35 @@ public final class LatencyGuardian {
         return enabled;
     }
 
+    public void activateCombat(
+            UUID playerId,
+            CombatTrigger trigger
+    ) {
+        if (!enabled || playerId == null || trigger == null) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+
+        state(playerId).activateCombat(
+                now,
+                combatWindowMs,
+                trigger
+        );
+    }
+
+    public boolean isCombatActive(UUID playerId) {
+        if (!enabled || playerId == null) {
+            return false;
+        }
+
+        PlayerState state = states.get(playerId);
+
+        return state != null
+                && state.combatUntilMs.get()
+                > System.currentTimeMillis();
+    }
+
     public void observeInbound(
             UUID playerId,
             PacketReceiveEvent event
@@ -131,7 +160,10 @@ public final class LatencyGuardian {
                 long now = System.currentTimeMillis();
 
                 state.recordAttack(now);
-                state.combatUntilMs.set(now + combatWindowMs);
+                activateCombat(
+                        playerId,
+                        CombatTrigger.ATTACK_PACKET
+                );
                 sampleMainThreadHandoff(playerId, state);
             }
         } catch (RuntimeException ignored) {
@@ -238,6 +270,9 @@ public final class LatencyGuardian {
                     true,
                     -1L,
                     -1L,
+                    0L,
+                    0L,
+                    CombatTrigger.NONE,
                     0L
             );
         }
@@ -347,6 +382,13 @@ public final class LatencyGuardian {
                 : -1L;
     }
 
+    public enum CombatTrigger {
+        NONE,
+        ATTACK_PACKET,
+        DAMAGE_DEALT,
+        DAMAGE_RECEIVED
+    }
+
     public enum Mode {
         NORMAL,
         PRESSURE,
@@ -387,6 +429,27 @@ public final class LatencyGuardian {
         private volatile long bytesBeforeUnwritable = -1L;
         private volatile long bytesBeforeWritable = -1L;
         private volatile long unwritableObservations;
+        private volatile CombatTrigger lastCombatTrigger =
+                CombatTrigger.NONE;
+        private final AtomicLong combatActivations =
+                new AtomicLong();
+
+        private void activateCombat(
+                long nowMs,
+                long windowMs,
+                CombatTrigger trigger
+        ) {
+            long until = nowMs + windowMs;
+
+            combatUntilMs.accumulateAndGet(
+                    until,
+                    (current, candidate) ->
+                            Math.max(current, candidate)
+            );
+
+            lastCombatTrigger = trigger;
+            combatActivations.incrementAndGet();
+        }
 
         private synchronized void recordMovement(long nowMs) {
             rollSecond(nowMs / 1000L);
@@ -454,7 +517,14 @@ public final class LatencyGuardian {
                     channelWritable,
                     bytesBeforeUnwritable,
                     bytesBeforeWritable,
-                    unwritableObservations
+                    unwritableObservations,
+                    Math.max(
+                            0L,
+                            combatUntilMs.get()
+                                    - System.currentTimeMillis()
+                    ),
+                    lastCombatTrigger,
+                    combatActivations.get()
             );
         }
 
@@ -507,7 +577,10 @@ public final class LatencyGuardian {
             boolean channelWritable,
             long bytesBeforeUnwritable,
             long bytesBeforeWritable,
-            long unwritableObservations
+            long unwritableObservations,
+            long combatRemainingMs,
+            CombatTrigger lastCombatTrigger,
+            long combatActivations
     ) {
     }
 }

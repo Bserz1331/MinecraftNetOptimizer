@@ -394,6 +394,25 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + latency.mode().name()
         );
 
+        if (latency.combatRemainingMs() > 0L) {
+            sender.sendMessage(
+                    ChatColor.GRAY + "Combat trigger: "
+                            + ChatColor.WHITE
+                            + latency.lastCombatTrigger().name()
+                            + ChatColor.GRAY
+                            + " / remaining "
+                            + ChatColor.WHITE
+                            + latency.combatRemainingMs()
+                            + " ms"
+            );
+
+            sender.sendMessage(
+                    ChatColor.GRAY + "Combat activations: "
+                            + ChatColor.WHITE
+                            + latency.combatActivations()
+            );
+        }
+
         sender.sendMessage(
                 ChatColor.GRAY
                         + "Critical inbound current second: "

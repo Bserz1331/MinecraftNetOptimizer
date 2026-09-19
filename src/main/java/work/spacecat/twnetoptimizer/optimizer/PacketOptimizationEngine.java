@@ -44,6 +44,7 @@ public final class PacketOptimizationEngine {
     private volatile int particleHighPingMs;
     private volatile int pressureParticleMax;
     private volatile int combatParticleMax;
+    private volatile long combatRefreshDeferralMs;
     private volatile long staleEntryMs;
 
     public PacketOptimizationEngine(
@@ -129,6 +130,14 @@ public final class PacketOptimizationEngine {
                 )
         );
 
+        combatRefreshDeferralMs = Math.max(
+                0L,
+                plugin.getConfig().getLong(
+                        "latency-guardian.combat-refresh-deferral-ms",
+                        5000L
+                )
+        );
+
         staleEntryMs = Math.max(
                 60000L,
                 plugin.getConfig().getLong(
@@ -173,7 +182,15 @@ public final class PacketOptimizationEngine {
             return false;
         }
 
-        if (now - previous.lastForwardedAt >= metadataRefreshMs) {
+        long elapsed =
+                now - previous.lastForwardedAt;
+
+        if (elapsed >= metadataRefreshMs
+                && !shouldDeferCombatRefresh(
+                playerId,
+                elapsed,
+                metadataRefreshMs
+        )) {
             return false;
         }
 
@@ -229,7 +246,15 @@ public final class PacketOptimizationEngine {
             return false;
         }
 
-        if (now - previous.lastForwardedAt >= uiRefreshMs) {
+        long elapsed =
+                now - previous.lastForwardedAt;
+
+        if (elapsed >= uiRefreshMs
+                && !shouldDeferCombatRefresh(
+                playerId,
+                elapsed,
+                uiRefreshMs
+        )) {
             return false;
         }
 
@@ -302,6 +327,17 @@ public final class PacketOptimizationEngine {
         }
 
         return false;
+    }
+
+    private boolean shouldDeferCombatRefresh(
+            UUID playerId,
+            long elapsed,
+            long refreshMs
+    ) {
+        return combatRefreshDeferralMs > 0L
+                && latencyGuardian.isCombatActive(playerId)
+                && elapsed
+                < refreshMs + combatRefreshDeferralMs;
     }
 
     public boolean isUiStatePacket(String packetName) {

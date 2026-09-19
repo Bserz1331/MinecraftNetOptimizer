@@ -3,10 +3,14 @@ package work.spacecat.twnetoptimizer;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import work.spacecat.twnetoptimizer.command.NetDebugCommand;
@@ -84,6 +88,29 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEntityDamageByEntity(EntityDamageByEntityEvent event) {
+        if (latencyGuardian == null || !latencyGuardian.isEnabled()) {
+            return;
+        }
+
+        if (event.getEntity() instanceof Player victim) {
+            latencyGuardian.activateCombat(
+                    victim.getUniqueId(),
+                    LatencyGuardian.CombatTrigger.DAMAGE_RECEIVED
+            );
+        }
+
+        Player attacker = resolvePlayerAttacker(event);
+
+        if (attacker != null) {
+            latencyGuardian.activateCombat(
+                    attacker.getUniqueId(),
+                    LatencyGuardian.CombatTrigger.DAMAGE_DEALT
+            );
+        }
+    }
+
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         clearPlayerState(event.getPlayer().getUniqueId());
@@ -135,6 +162,19 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         profiler.start();
         latencyGuardian.reload();
         optimizer.reload();
+    }
+
+    private Player resolvePlayerAttacker(EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player player) {
+            return player;
+        }
+
+        if (event.getDamager() instanceof Projectile projectile
+                && projectile.getShooter() instanceof Player player) {
+            return player;
+        }
+
+        return null;
     }
 
     private void clearPlayerState(java.util.UUID playerId) {
