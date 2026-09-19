@@ -5,11 +5,15 @@ import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 public final class PacketOptimizationEngine {
     private static final Set<String> UI_STATE_PACKETS = Set.of(
@@ -26,12 +30,27 @@ public final class PacketOptimizationEngine {
     private final LatencyGuardian latencyGuardian;
     private final OptimizationStats stats = new OptimizationStats();
 
-    private final ConcurrentHashMap<MetadataKey, PayloadEntry> metadataCache =
-            new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UiStateKey, PayloadEntry> uiStateCache =
-            new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, ConcurrentHashMap<Integer, PayloadEntry>>
+            metadataCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, ConcurrentHashMap<String, PayloadEntry>>
+            uiStateCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, ParticleWindow> particleWindows =
             new ConcurrentHashMap<>();
+
+    private final PlayerEntryBudget metadataBudget =
+            new PlayerEntryBudget(16384, 2048);
+    private final PlayerEntryBudget uiBudget =
+            new PlayerEntryBudget(4096, 512);
+
+    private final AtomicInteger particleHighWater = new AtomicInteger();
+    private final LongAdder particleWindowSkipped = new LongAdder();
+    private final LongAdder metadataStaleRemoved = new LongAdder();
+    private final LongAdder uiStaleRemoved = new LongAdder();
+    private final LongAdder particleStaleRemoved = new LongAdder();
+    private final LongAdder metadataTrimRemoved = new LongAdder();
+    private final LongAdder uiTrimRemoved = new LongAdder();
+    private final LongAdder uncacheablePayloads = new LongAdder();
+    private final LongAdder uncacheableInvalidations = new LongAdder();
 
     private volatile boolean runtimeEnabled;
     private volatile boolean metadataEnabled;
@@ -48,7 +67,9 @@ public final class PacketOptimizationEngine {
     private volatile long combatRefreshDeferralMs;
     private volatile long staleEntryMs;
     private volatile int metadataMaxEntries;
+    private volatile int metadataMaxEntriesPerPlayer;
     private volatile int uiMaxEntries;
+    private volatile int uiMaxEntriesPerPlayer;
     private volatile int particleWindowMaxEntries;
     private volatile int maxPayloadBytes;
 
@@ -159,11 +180,33 @@ public final class PacketOptimizationEngine {
                 )
         );
 
+        metadataMaxEntriesPerPlayer = Math.max(
+                64,
+                Math.min(
+                        metadataMaxEntries,
+                        plugin.getConfig().getInt(
+                                "optimizer.cache.metadata-max-entries-per-player",
+                                2048
+                        )
+                )
+        );
+
         uiMaxEntries = Math.max(
                 128,
                 plugin.getConfig().getInt(
                         "optimizer.cache.ui-max-entries",
                         4096
+                )
+        );
+
+        uiMaxEntriesPerPlayer = Math.max(
+                32,
+                Math.min(
+                        uiMaxEntries,
+                        plugin.getConfig().getInt(
+                                "optimizer.cache.ui-max-entries-per-player",
+                                512
+                        )
                 )
         );
 
@@ -181,6 +224,15 @@ public final class PacketOptimizationEngine {
                         "optimizer.cache.max-payload-bytes",
                         65536
                 )
+        );
+
+        metadataBudget.configure(
+                metadataMaxEntries,
+                metadataMaxEntriesPerPlayer
+        );
+        uiBudget.configure(
+                uiMaxEntries,
+                uiMaxEntriesPerPlayer
         );
 
         trimCachesToLimits();
@@ -204,12 +256,21 @@ public final class PacketOptimizationEngine {
             Object byteBuf,
             long now
     ) {
-        if (!runtimeEnabled || !metadataEnabled || byteBuf == null) {
+        if (!runtimeEnabled
+                || !metadataEnabled
+                || playerId == null
+                || byteBuf == null) {
             return false;
         }
 
-        PayloadEntry previous =
-                metadataCache.get(new MetadataKey(playerId, entityId));
+        ConcurrentHashMap<Integer, PayloadEntry> playerCache =
+                metadataCache.get(playerId);
+
+        if (playerCache == null) {
+            return false;
+        }
+
+        PayloadEntry previous = playerCache.get(entityId);
 
         if (previous == null) {
             return false;
@@ -221,8 +282,7 @@ public final class PacketOptimizationEngine {
             return false;
         }
 
-        long elapsed =
-                now - previous.lastForwardedAt;
+        long elapsed = now - previous.lastForwardedAt;
 
         if (elapsed >= metadataRefreshMs
                 && !shouldDeferCombatRefresh(
@@ -250,25 +310,13 @@ public final class PacketOptimizationEngine {
             return;
         }
 
-        MetadataKey key = new MetadataKey(playerId, entityId);
-
-        if (!canStore(metadataCache, key, metadataMaxEntries)) {
-            return;
-        }
-
-        byte[] payload = PayloadBuffer.copy(byteBuf);
-
-        if (payload == null
-                || payload.length == 0
-                || payload.length > maxPayloadBytes) {
-            return;
-        }
-
-        putBounded(
+        commitPayload(
                 metadataCache,
-                key,
-                new PayloadEntry(payload, now),
-                metadataMaxEntries
+                metadataBudget,
+                playerId,
+                entityId,
+                byteBuf,
+                now
         );
     }
 
@@ -280,13 +328,20 @@ public final class PacketOptimizationEngine {
     ) {
         if (!runtimeEnabled
                 || !uiEnabled
+                || playerId == null
                 || stateKey == null
                 || byteBuf == null) {
             return false;
         }
 
-        PayloadEntry previous =
-                uiStateCache.get(new UiStateKey(playerId, stateKey));
+        ConcurrentHashMap<String, PayloadEntry> playerCache =
+                uiStateCache.get(playerId);
+
+        if (playerCache == null) {
+            return false;
+        }
+
+        PayloadEntry previous = playerCache.get(stateKey);
 
         if (previous == null) {
             return false;
@@ -298,8 +353,7 @@ public final class PacketOptimizationEngine {
             return false;
         }
 
-        long elapsed =
-                now - previous.lastForwardedAt;
+        long elapsed = now - previous.lastForwardedAt;
 
         if (elapsed >= uiRefreshMs
                 && !shouldDeferCombatRefresh(
@@ -328,25 +382,13 @@ public final class PacketOptimizationEngine {
             return;
         }
 
-        UiStateKey key = new UiStateKey(playerId, stateKey);
-
-        if (!canStore(uiStateCache, key, uiMaxEntries)) {
-            return;
-        }
-
-        byte[] payload = PayloadBuffer.copy(byteBuf);
-
-        if (payload == null
-                || payload.length == 0
-                || payload.length > maxPayloadBytes) {
-            return;
-        }
-
-        putBounded(
+        commitPayload(
                 uiStateCache,
-                key,
-                new PayloadEntry(payload, now),
-                uiMaxEntries
+                uiBudget,
+                playerId,
+                stateKey,
+                byteBuf,
+                now
         );
     }
 
@@ -399,6 +441,139 @@ public final class PacketOptimizationEngine {
         return false;
     }
 
+    public boolean isUiStatePacket(String packetName) {
+        return UI_STATE_PACKETS.contains(packetName);
+    }
+
+    public OptimizationStats stats() {
+        return stats;
+    }
+
+    public LifecycleSnapshot lifecycleSnapshot() {
+        PlayerEntryBudget.Snapshot metadata =
+                metadataBudget.snapshot(null);
+        PlayerEntryBudget.Snapshot ui =
+                uiBudget.snapshot(null);
+
+        return new LifecycleSnapshot(
+                metadata.total(),
+                metadata.globalMax(),
+                metadata.perPlayerMax(),
+                metadata.highWater(),
+                metadata.skippedGlobal(),
+                metadata.skippedPlayer(),
+                metadataStaleRemoved.sum(),
+                metadataTrimRemoved.sum(),
+                ui.total(),
+                ui.globalMax(),
+                ui.perPlayerMax(),
+                ui.highWater(),
+                ui.skippedGlobal(),
+                ui.skippedPlayer(),
+                uiStaleRemoved.sum(),
+                uiTrimRemoved.sum(),
+                particleWindows.size(),
+                particleWindowMaxEntries,
+                particleHighWater.get(),
+                particleWindowSkipped.sum(),
+                particleStaleRemoved.sum(),
+                uncacheablePayloads.sum(),
+                uncacheableInvalidations.sum()
+        );
+    }
+
+    public PlayerLifecycleSnapshot lifecycleSnapshot(UUID playerId) {
+        PlayerEntryBudget.Snapshot metadata =
+                metadataBudget.snapshot(playerId);
+        PlayerEntryBudget.Snapshot ui =
+                uiBudget.snapshot(playerId);
+
+        return new PlayerLifecycleSnapshot(
+                metadata.player(),
+                metadata.perPlayerMax(),
+                ui.player(),
+                ui.perPlayerMax(),
+                particleWindows.containsKey(playerId)
+        );
+    }
+
+    public void clearEntity(UUID playerId, int entityId) {
+        removePayloadEntry(
+                metadataCache,
+                metadataBudget,
+                playerId,
+                entityId
+        );
+    }
+
+    public void clearPlayer(UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+
+        clearPlayerCache(
+                metadataCache,
+                metadataBudget,
+                playerId
+        );
+        clearPlayerCache(
+                uiStateCache,
+                uiBudget,
+                playerId
+        );
+        particleWindows.remove(playerId);
+    }
+
+    public void reset() {
+        clearCaches();
+        stats.reset();
+        metadataBudget.resetMetrics();
+        uiBudget.resetMetrics();
+        particleHighWater.set(particleWindows.size());
+        particleWindowSkipped.reset();
+        metadataStaleRemoved.reset();
+        uiStaleRemoved.reset();
+        particleStaleRemoved.reset();
+        metadataTrimRemoved.reset();
+        uiTrimRemoved.reset();
+        uncacheablePayloads.reset();
+        uncacheableInvalidations.reset();
+    }
+
+    public void cleanup() {
+        long now = System.currentTimeMillis();
+        long cutoff = now - staleEntryMs;
+
+        cleanupPayloadCache(
+                metadataCache,
+                metadataBudget,
+                cutoff,
+                metadataStaleRemoved
+        );
+
+        cleanupPayloadCache(
+                uiStateCache,
+                uiBudget,
+                cutoff,
+                uiStaleRemoved
+        );
+
+        long staleSecond = cutoff / 1000L;
+
+        for (Map.Entry<UUID, ParticleWindow> entry
+                : particleWindows.entrySet()) {
+            if (entry.getValue().second < staleSecond
+                    && particleWindows.remove(
+                    entry.getKey(),
+                    entry.getValue()
+            )) {
+                particleStaleRemoved.increment();
+            }
+        }
+
+        trimCachesToLimits();
+    }
+
     private boolean shouldDeferCombatRefresh(
             UUID playerId,
             long elapsed,
@@ -410,58 +585,87 @@ public final class PacketOptimizationEngine {
                 < refreshMs + combatRefreshDeferralMs;
     }
 
-    public boolean isUiStatePacket(String packetName) {
-        return UI_STATE_PACKETS.contains(packetName);
-    }
+    private <K> void commitPayload(
+            ConcurrentHashMap<UUID, ConcurrentHashMap<K, PayloadEntry>> cache,
+            PlayerEntryBudget budget,
+            UUID playerId,
+            K key,
+            Object byteBuf,
+            long now
+    ) {
+        ConcurrentHashMap<K, PayloadEntry> playerCache =
+                cache.get(playerId);
 
-    public OptimizationStats stats() {
-        return stats;
-    }
+        if (playerCache != null) {
+            synchronized (playerCache) {
+                if (playerCache.containsKey(key)) {
+                    byte[] payload = PayloadBuffer.copy(byteBuf);
 
-    public void clearEntity(UUID playerId, int entityId) {
-        metadataCache.remove(new MetadataKey(playerId, entityId));
-    }
+                    if (!cacheable(payload)) {
+                        if (playerCache.remove(key) != null) {
+                            budget.release(playerId);
+                            uncacheableInvalidations.increment();
+                        }
 
-    public void clearPlayer(UUID playerId) {
-        if (playerId == null) {
+                        if (playerCache.isEmpty()) {
+                            cache.remove(playerId, playerCache);
+                        }
+
+                        uncacheablePayloads.increment();
+                        return;
+                    }
+
+                    playerCache.put(
+                            key,
+                            new PayloadEntry(payload, now)
+                    );
+                    return;
+                }
+            }
+        }
+
+        if (!budget.tryAcquire(playerId)) {
             return;
         }
 
-        metadataCache.keySet().removeIf(
-                key -> key.playerId.equals(playerId)
-        );
+        byte[] payload = PayloadBuffer.copy(byteBuf);
 
-        uiStateCache.keySet().removeIf(
-                key -> key.playerId.equals(playerId)
-        );
+        if (!cacheable(payload)) {
+            budget.release(playerId);
+            uncacheablePayloads.increment();
+            return;
+        }
 
-        particleWindows.remove(playerId);
+        synchronized (cache) {
+            playerCache = cache.computeIfAbsent(
+                    playerId,
+                    ignored -> new ConcurrentHashMap<>()
+            );
+
+            synchronized (playerCache) {
+                PayloadEntry existing = playerCache.get(key);
+
+                if (existing != null) {
+                    playerCache.put(
+                            key,
+                            new PayloadEntry(payload, now)
+                    );
+                    budget.release(playerId);
+                    return;
+                }
+
+                playerCache.put(
+                        key,
+                        new PayloadEntry(payload, now)
+                );
+            }
+        }
     }
 
-    public void reset() {
-        clearCaches();
-        stats.reset();
-    }
-
-    public void cleanup() {
-        long now = System.currentTimeMillis();
-        long cutoff = now - staleEntryMs;
-
-        metadataCache.entrySet().removeIf(
-                entry -> entry.getValue().lastTouchedAt < cutoff
-        );
-
-        uiStateCache.entrySet().removeIf(
-                entry -> entry.getValue().lastTouchedAt < cutoff
-        );
-
-        long staleSecond = cutoff / 1000L;
-
-        particleWindows.entrySet().removeIf(
-                entry -> entry.getValue().second < staleSecond
-        );
-
-        trimCachesToLimits();
+    private boolean cacheable(byte[] payload) {
+        return payload != null
+                && payload.length > 0
+                && payload.length <= maxPayloadBytes;
     }
 
     private ParticleWindow getOrCreateParticleWindow(
@@ -482,89 +686,264 @@ public final class PacketOptimizationEngine {
             }
 
             if (particleWindows.size() >= particleWindowMaxEntries) {
+                particleWindowSkipped.increment();
                 return null;
             }
 
             ParticleWindow created = new ParticleWindow(second);
             particleWindows.put(playerId, created);
+            particleHighWater.accumulateAndGet(
+                    particleWindows.size(),
+                    Math::max
+            );
             return created;
         }
     }
 
-    private static <K> boolean canStore(
-            ConcurrentHashMap<K, PayloadEntry> cache,
-            K key,
-            int maxEntries
+    private <K> void cleanupPayloadCache(
+            ConcurrentHashMap<UUID, ConcurrentHashMap<K, PayloadEntry>> cache,
+            PlayerEntryBudget budget,
+            long cutoff,
+            LongAdder removedCounter
     ) {
-        return cache.containsKey(key) || cache.size() < maxEntries;
+        for (Map.Entry<UUID, ConcurrentHashMap<K, PayloadEntry>> player
+                : cache.entrySet()) {
+            UUID playerId = player.getKey();
+            ConcurrentHashMap<K, PayloadEntry> playerCache =
+                    player.getValue();
+
+            int removed = 0;
+
+            synchronized (playerCache) {
+                for (Map.Entry<K, PayloadEntry> entry
+                        : playerCache.entrySet()) {
+                    if (entry.getValue().lastTouchedAt < cutoff
+                            && playerCache.remove(
+                            entry.getKey(),
+                            entry.getValue()
+                    )) {
+                        removed++;
+                    }
+                }
+
+                if (playerCache.isEmpty()) {
+                    cache.remove(playerId, playerCache);
+                }
+            }
+
+            if (removed > 0) {
+                budget.release(playerId, removed);
+                removedCounter.add(removed);
+            }
+        }
     }
 
-    private static <K> void putBounded(
-            ConcurrentHashMap<K, PayloadEntry> cache,
-            K key,
-            PayloadEntry entry,
-            int maxEntries
+    private <K> void clearPlayerCache(
+            ConcurrentHashMap<UUID, ConcurrentHashMap<K, PayloadEntry>> cache,
+            PlayerEntryBudget budget,
+            UUID playerId
     ) {
-        PayloadEntry existing = cache.get(key);
+        synchronized (cache) {
+            ConcurrentHashMap<K, PayloadEntry> playerCache =
+                    cache.remove(playerId);
 
-        if (existing != null
-                && cache.replace(key, existing, entry)) {
+            if (playerCache == null) {
+                return;
+            }
+
+            int removed;
+
+            synchronized (playerCache) {
+                removed = playerCache.size();
+                playerCache.clear();
+            }
+
+            budget.release(playerId, removed);
+        }
+    }
+
+    private <K> void removePayloadEntry(
+            ConcurrentHashMap<UUID, ConcurrentHashMap<K, PayloadEntry>> cache,
+            PlayerEntryBudget budget,
+            UUID playerId,
+            K key
+    ) {
+        ConcurrentHashMap<K, PayloadEntry> playerCache =
+                cache.get(playerId);
+
+        if (playerCache == null) {
             return;
         }
 
-        synchronized (cache) {
-            existing = cache.get(key);
-
-            if (existing != null) {
-                cache.put(key, entry);
-                return;
+        synchronized (playerCache) {
+            if (playerCache.remove(key) != null) {
+                budget.release(playerId);
             }
 
-            if (cache.size() >= maxEntries) {
-                return;
+            if (playerCache.isEmpty()) {
+                cache.remove(playerId, playerCache);
             }
-
-            cache.put(key, entry);
         }
     }
 
     private void trimCachesToLimits() {
-        trimPayloadCache(metadataCache, metadataMaxEntries);
-        trimPayloadCache(uiStateCache, uiMaxEntries);
-        trimParticleWindows(particleWindowMaxEntries);
+        trimPayloadCache(
+                metadataCache,
+                metadataBudget,
+                metadataTrimRemoved
+        );
+        trimPayloadCache(
+                uiStateCache,
+                uiBudget,
+                uiTrimRemoved
+        );
+        trimParticleWindows();
     }
 
-    private static <K> void trimPayloadCache(
-            ConcurrentHashMap<K, PayloadEntry> cache,
-            int maxEntries
+    private <K> void trimPayloadCache(
+            ConcurrentHashMap<UUID, ConcurrentHashMap<K, PayloadEntry>> cache,
+            PlayerEntryBudget budget,
+            LongAdder removedCounter
     ) {
-        int excess = cache.size() - maxEntries;
+        for (Map.Entry<UUID, ConcurrentHashMap<K, PayloadEntry>> player
+                : cache.entrySet()) {
+            UUID playerId = player.getKey();
+            ConcurrentHashMap<K, PayloadEntry> playerCache =
+                    player.getValue();
 
-        if (excess <= 0) {
+            int excess =
+                    playerCache.size() - budget.perPlayerMax();
+
+            if (excess > 0) {
+                int removed = removeOldest(
+                        playerCache,
+                        excess
+                );
+
+                if (removed > 0) {
+                    budget.release(playerId, removed);
+                    removedCounter.add(removed);
+                }
+            }
+
+            if (playerCache.isEmpty()) {
+                cache.remove(playerId, playerCache);
+            }
+        }
+
+        int globalExcess =
+                budget.totalCount() - budget.globalMax();
+
+        if (globalExcess <= 0) {
             return;
         }
 
-        cache.entrySet().stream()
-                .sorted(Comparator.comparingLong(
-                        entry -> entry.getValue().lastTouchedAt
-                ))
-                .limit(excess)
-                .map(Map.Entry::getKey)
-                .toList()
-                .forEach(cache::remove);
+        List<GlobalEntry<K>> all = new ArrayList<>();
+
+        for (Map.Entry<UUID, ConcurrentHashMap<K, PayloadEntry>> player
+                : cache.entrySet()) {
+            for (Map.Entry<K, PayloadEntry> entry
+                    : player.getValue().entrySet()) {
+                all.add(
+                        new GlobalEntry<>(
+                                player.getKey(),
+                                entry.getKey(),
+                                entry.getValue()
+                        )
+                );
+            }
+        }
+
+        all.sort(
+                Comparator.comparingLong(
+                        item -> item.entry.lastTouchedAt
+                )
+        );
+
+        int removed = 0;
+
+        for (GlobalEntry<K> item : all) {
+            if (removed >= globalExcess) {
+                break;
+            }
+
+            ConcurrentHashMap<K, PayloadEntry> playerCache =
+                    cache.get(item.playerId);
+
+            if (playerCache == null) {
+                continue;
+            }
+
+            synchronized (playerCache) {
+                if (playerCache.remove(
+                        item.key,
+                        item.entry
+                )) {
+                    budget.release(item.playerId);
+                    removed++;
+                }
+
+                if (playerCache.isEmpty()) {
+                    cache.remove(item.playerId, playerCache);
+                }
+            }
+        }
+
+        if (removed > 0) {
+            removedCounter.add(removed);
+        }
     }
 
-    private void trimParticleWindows(int maxEntries) {
-        int excess = particleWindows.size() - maxEntries;
+    private static <K> int removeOldest(
+            ConcurrentHashMap<K, PayloadEntry> cache,
+            int count
+    ) {
+        if (count <= 0) {
+            return 0;
+        }
+
+        List<Map.Entry<K, PayloadEntry>> oldest =
+                cache.entrySet()
+                        .stream()
+                        .sorted(
+                                Comparator.comparingLong(
+                                        entry ->
+                                                entry.getValue().lastTouchedAt
+                                )
+                        )
+                        .limit(count)
+                        .toList();
+
+        int removed = 0;
+
+        synchronized (cache) {
+            for (Map.Entry<K, PayloadEntry> entry : oldest) {
+                if (cache.remove(
+                        entry.getKey(),
+                        entry.getValue()
+                )) {
+                    removed++;
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    private void trimParticleWindows() {
+        int excess =
+                particleWindows.size() - particleWindowMaxEntries;
 
         if (excess <= 0) {
             return;
         }
 
         particleWindows.entrySet().stream()
-                .sorted(Comparator.comparingLong(
-                        entry -> entry.getValue().second
-                ))
+                .sorted(
+                        Comparator.comparingLong(
+                                entry -> entry.getValue().second
+                        )
+                )
                 .limit(excess)
                 .map(Map.Entry::getKey)
                 .toList()
@@ -575,12 +954,15 @@ public final class PacketOptimizationEngine {
         metadataCache.clear();
         uiStateCache.clear();
         particleWindows.clear();
+        metadataBudget.clearCounts();
+        uiBudget.clearCounts();
     }
 
-    private record MetadataKey(UUID playerId, int entityId) {
-    }
-
-    private record UiStateKey(UUID playerId, String stateKey) {
+    private record GlobalEntry<K>(
+            UUID playerId,
+            K key,
+            PayloadEntry entry
+    ) {
     }
 
     private static final class PayloadEntry {
@@ -602,5 +984,41 @@ public final class PacketOptimizationEngine {
         private ParticleWindow(long second) {
             this.second = second;
         }
+    }
+
+    public record LifecycleSnapshot(
+            int metadataEntries,
+            int metadataGlobalMax,
+            int metadataPerPlayerMax,
+            int metadataHighWater,
+            long metadataSkippedGlobal,
+            long metadataSkippedPlayer,
+            long metadataStaleRemoved,
+            long metadataTrimRemoved,
+            int uiEntries,
+            int uiGlobalMax,
+            int uiPerPlayerMax,
+            int uiHighWater,
+            long uiSkippedGlobal,
+            long uiSkippedPlayer,
+            long uiStaleRemoved,
+            long uiTrimRemoved,
+            int particleWindows,
+            int particleWindowMax,
+            int particleHighWater,
+            long particleWindowSkipped,
+            long particleStaleRemoved,
+            long uncacheablePayloads,
+            long uncacheableInvalidations
+    ) {
+    }
+
+    public record PlayerLifecycleSnapshot(
+            int metadataEntries,
+            int metadataMax,
+            int uiEntries,
+            int uiMax,
+            boolean particleWindowPresent
+    ) {
     }
 }

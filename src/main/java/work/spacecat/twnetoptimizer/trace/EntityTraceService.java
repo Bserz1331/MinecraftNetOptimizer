@@ -5,10 +5,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class EntityTraceService {
     private final Map<UUID, TraceSession> sessions = new ConcurrentHashMap<>();
+
+    private final AtomicInteger totalEntities = new AtomicInteger();
+    private final AtomicInteger highWaterEntities = new AtomicInteger();
+    private final LongAdder skippedEntities = new LongAdder();
+    private final LongAdder cleanupRemovedSessions = new LongAdder();
+    private final LongAdder trimRemovedEntities = new LongAdder();
 
     private volatile int maxEntitiesPerSession = 2048;
     private volatile long resultRetentionMs = 300000L;
@@ -27,7 +34,12 @@ public final class EntityTraceService {
 
     public void start(UUID playerId, int seconds) {
         long expiresAt = System.currentTimeMillis() + seconds * 1000L;
-        sessions.put(playerId, new TraceSession(expiresAt));
+        TraceSession replacement = new TraceSession(expiresAt);
+        TraceSession previous = sessions.put(playerId, replacement);
+
+        if (previous != null) {
+            subtractEntities(previous.counters.size());
+        }
     }
 
     public boolean isActive(UUID playerId) {
@@ -80,23 +92,71 @@ public final class EntityTraceService {
         return new TraceSnapshot(active, remaining, top);
     }
 
+    public MetricsSnapshot metricsSnapshot() {
+        long now = System.currentTimeMillis();
+
+        long activeSessions = sessions.values()
+                .stream()
+                .filter(session -> now <= session.expiresAt)
+                .count();
+
+        return new MetricsSnapshot(
+                sessions.size(),
+                (int) activeSessions,
+                totalEntities.get(),
+                maxEntitiesPerSession,
+                highWaterEntities.get(),
+                skippedEntities.sum(),
+                cleanupRemovedSessions.sum(),
+                trimRemovedEntities.sum()
+        );
+    }
+
+    public PlayerMetricsSnapshot metricsSnapshot(UUID playerId) {
+        TraceSession session = sessions.get(playerId);
+
+        return new PlayerMetricsSnapshot(
+                session == null ? 0 : session.counters.size(),
+                maxEntitiesPerSession,
+                session != null
+                        && System.currentTimeMillis() <= session.expiresAt
+        );
+    }
+
     public void cleanup() {
         long now = System.currentTimeMillis();
 
-        sessions.entrySet().removeIf(
-                entry -> now
-                        > entry.getValue().expiresAt + resultRetentionMs
-        );
+        for (Map.Entry<UUID, TraceSession> entry : sessions.entrySet()) {
+            TraceSession session = entry.getValue();
+
+            if (now > session.expiresAt + resultRetentionMs
+                    && sessions.remove(entry.getKey(), session)) {
+                subtractEntities(session.counters.size());
+                cleanupRemovedSessions.increment();
+            }
+        }
 
         trimSessionsToLimit();
     }
 
     public void remove(UUID playerId) {
-        sessions.remove(playerId);
+        TraceSession removed = sessions.remove(playerId);
+
+        if (removed != null) {
+            subtractEntities(removed.counters.size());
+        }
     }
 
     public void clearAll() {
         sessions.clear();
+        totalEntities.set(0);
+    }
+
+    public void resetMetrics() {
+        highWaterEntities.set(totalEntities.get());
+        skippedEntities.reset();
+        cleanupRemovedSessions.reset();
+        trimRemovedEntities.reset();
     }
 
     private EntityCounters createCountersIfCapacity(
@@ -112,11 +172,15 @@ public final class EntityTraceService {
             }
 
             if (session.counters.size() >= maxEntitiesPerSession) {
+                skippedEntities.increment();
                 return null;
             }
 
             EntityCounters created = new EntityCounters();
             session.counters.put(entityId, created);
+
+            int current = totalEntities.incrementAndGet();
+            highWaterEntities.accumulateAndGet(current, Math::max);
             return created;
         }
     }
@@ -130,14 +194,35 @@ public final class EntityTraceService {
                 continue;
             }
 
-            for (Integer entityId : session.counters.keySet()) {
-                if (excess-- <= 0) {
-                    break;
-                }
+            int removed = 0;
 
-                session.counters.remove(entityId);
+            synchronized (session.counters) {
+                for (Integer entityId : session.counters.keySet()) {
+                    if (removed >= excess) {
+                        break;
+                    }
+
+                    if (session.counters.remove(entityId) != null) {
+                        removed++;
+                    }
+                }
+            }
+
+            if (removed > 0) {
+                subtractEntities(removed);
+                trimRemovedEntities.add(removed);
             }
         }
+    }
+
+    private void subtractEntities(int count) {
+        if (count <= 0) {
+            return;
+        }
+
+        totalEntities.updateAndGet(
+                current -> Math.max(0, current - count)
+        );
     }
 
     private static final class TraceSession {
@@ -191,5 +276,24 @@ public final class EntityTraceService {
         public long total() {
             return metadata + teleport + velocity;
         }
+    }
+
+    public record MetricsSnapshot(
+            int sessions,
+            int activeSessions,
+            int entities,
+            int maxEntitiesPerSession,
+            int highWaterEntities,
+            long skippedEntities,
+            long cleanupRemovedSessions,
+            long trimRemovedEntities
+    ) {
+    }
+
+    public record PlayerMetricsSnapshot(
+            int entities,
+            int maxEntities,
+            boolean active
+    ) {
     }
 }

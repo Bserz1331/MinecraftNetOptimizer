@@ -140,9 +140,19 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
+        UUID playerId = event.getPlayer().getUniqueId();
+
         clearPlayerLifecycleState(
-                event.getPlayer().getUniqueId(),
+                playerId,
                 true
+        );
+
+        Bukkit.getScheduler().runTask(
+                this,
+                () -> clearPlayerLifecycleState(
+                        playerId,
+                        true
+                )
         );
     }
 
