@@ -70,12 +70,14 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
             case "reset" -> {
                 plugin.getProfiler().reset();
                 plugin.getOptimizer().reset();
+                plugin.getTraceService().resetMetrics();
                 plugin.getVirtualEntityRegistry().resetAllActivity();
+                plugin.getVirtualEntityRegistry().resetMetrics();
                 plugin.getLatencyGuardian().reset();
 
                 sender.sendMessage(
                         prefix() + ChatColor.GREEN
-                                + "Profiler, optimizer, virtual-entity and latency counters reset."
+                                + "Profiler, optimizer, lifecycle, virtual-entity and latency counters reset."
                 );
             }
             case "reload" -> {
