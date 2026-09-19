@@ -1,3 +1,6 @@
+# TWNetOptimizer v0.6
+# Conservative defaults for public/complex plugin environments.
+
 mode: optimize-safe
 
 sampling:
@@ -9,18 +12,25 @@ burst:
 
 optimizer:
   enabled: true
+
   metadata-dedupe:
     enabled: true
     refresh-ms: 30000
+
   ui-dedupe:
     enabled: true
-    duplicate-window-ms: 2000
+    # State is tracked per logical UI target. Exact unchanged state is suppressed.
+    # A refresh is still forwarded periodically.
+    refresh-ms: 30000
+
+  # Disabled by default for maximum compatibility with RPG / Slimefun / skill visuals.
   particle-throttle:
-    enabled: true
+    enabled: false
     max-per-second: 500
     adaptive: true
     adaptive-max-per-second: 250
     high-ping-ms: 180
+
   cache:
     stale-entry-ms: 300000
 
@@ -30,6 +40,10 @@ latency-guardian:
   handoff-probe-interval-ms: 100
   handoff-sample-limit: 128
   handoff-pressure-ms: 60
+
+  # Netty channel writability is sampled only, never changed by TWNetOptimizer.
+  backpressure-probe-interval-ms: 50
+
   cosmetic:
     pressure-particle-max-per-second: 150
     combat-particle-max-per-second: 100

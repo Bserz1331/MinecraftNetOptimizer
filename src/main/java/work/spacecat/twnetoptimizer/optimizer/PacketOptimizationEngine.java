@@ -5,7 +5,6 @@ import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -26,15 +25,18 @@ public final class PacketOptimizationEngine {
     private final LatencyGuardian latencyGuardian;
     private final OptimizationStats stats = new OptimizationStats();
 
-    private final Map<MetadataKey, CacheEntry> metadataCache = new ConcurrentHashMap<>();
-    private final Map<PayloadKey, Long> uiRecent = new ConcurrentHashMap<>();
-    private final Map<UUID, ParticleWindow> particleWindows = new ConcurrentHashMap<>();
+    private final Map<MetadataKey, PayloadEntry> metadataCache =
+            new ConcurrentHashMap<>();
+    private final Map<UiStateKey, PayloadEntry> uiStateCache =
+            new ConcurrentHashMap<>();
+    private final Map<UUID, ParticleWindow> particleWindows =
+            new ConcurrentHashMap<>();
 
     private volatile boolean runtimeEnabled;
     private volatile boolean metadataEnabled;
     private volatile long metadataRefreshMs;
     private volatile boolean uiEnabled;
-    private volatile long uiWindowMs;
+    private volatile long uiRefreshMs;
     private volatile boolean particleEnabled;
     private volatile int particleMax;
     private volatile boolean particleAdaptive;
@@ -56,32 +58,59 @@ public final class PacketOptimizationEngine {
     }
 
     public void reload() {
-        runtimeEnabled = plugin.getConfig().getBoolean("optimizer.enabled", true);
-        metadataEnabled = plugin.getConfig().getBoolean("optimizer.metadata-dedupe.enabled", true);
+        runtimeEnabled = plugin.getConfig()
+                .getBoolean("optimizer.enabled", true);
+
+        metadataEnabled = plugin.getConfig()
+                .getBoolean("optimizer.metadata-dedupe.enabled", true);
+
         metadataRefreshMs = Math.max(
                 1000L,
-                plugin.getConfig().getLong("optimizer.metadata-dedupe.refresh-ms", 30000L)
+                plugin.getConfig().getLong(
+                        "optimizer.metadata-dedupe.refresh-ms",
+                        30000L
+                )
         );
 
-        uiEnabled = plugin.getConfig().getBoolean("optimizer.ui-dedupe.enabled", true);
-        uiWindowMs = Math.max(
-                50L,
-                plugin.getConfig().getLong("optimizer.ui-dedupe.duplicate-window-ms", 2000L)
+        uiEnabled = plugin.getConfig()
+                .getBoolean("optimizer.ui-dedupe.enabled", true);
+
+        uiRefreshMs = Math.max(
+                1000L,
+                plugin.getConfig().getLong(
+                        "optimizer.ui-dedupe.refresh-ms",
+                        30000L
+                )
         );
 
-        particleEnabled = plugin.getConfig().getBoolean("optimizer.particle-throttle.enabled", true);
+        particleEnabled = plugin.getConfig()
+                .getBoolean("optimizer.particle-throttle.enabled", false);
+
         particleMax = Math.max(
                 1,
-                plugin.getConfig().getInt("optimizer.particle-throttle.max-per-second", 500)
+                plugin.getConfig().getInt(
+                        "optimizer.particle-throttle.max-per-second",
+                        500
+                )
         );
-        particleAdaptive = plugin.getConfig().getBoolean("optimizer.particle-throttle.adaptive", true);
+
+        particleAdaptive = plugin.getConfig()
+                .getBoolean("optimizer.particle-throttle.adaptive", true);
+
         particleAdaptiveMax = Math.max(
                 1,
-                plugin.getConfig().getInt("optimizer.particle-throttle.adaptive-max-per-second", 250)
+                plugin.getConfig().getInt(
+                        "optimizer.particle-throttle.adaptive-max-per-second",
+                        250
+                )
         );
+
         particleHighPingMs = Math.max(
                 1,
-                plugin.getConfig().getInt("optimizer.particle-throttle.high-ping-ms", 180)
+                plugin.getConfig().getInt(
+                        "optimizer.particle-throttle.high-ping-ms",
+                        180
+                )
         );
 
         pressureParticleMax = Math.max(
@@ -91,6 +120,7 @@ public final class PacketOptimizationEngine {
                         150
                 )
         );
+
         combatParticleMax = Math.max(
                 1,
                 plugin.getConfig().getInt(
@@ -101,7 +131,10 @@ public final class PacketOptimizationEngine {
 
         staleEntryMs = Math.max(
                 60000L,
-                plugin.getConfig().getLong("optimizer.cache.stale-entry-ms", 300000L)
+                plugin.getConfig().getLong(
+                        "optimizer.cache.stale-entry-ms",
+                        300000L
+                )
         );
     }
 
@@ -111,48 +144,119 @@ public final class PacketOptimizationEngine {
 
     public void setEnabled(boolean enabled) {
         runtimeEnabled = enabled;
+
         if (!enabled) {
             clearCaches();
         }
     }
 
-    public boolean shouldSuppressMetadata(UUID playerId, int entityId, byte[] payload, long now) {
-        if (!runtimeEnabled || !metadataEnabled || payload.length == 0) {
+    public boolean shouldSuppressMetadata(
+            UUID playerId,
+            int entityId,
+            Object byteBuf,
+            long now
+    ) {
+        if (!runtimeEnabled || !metadataEnabled || byteBuf == null) {
             return false;
         }
 
-        MetadataKey key = new MetadataKey(playerId, entityId);
-        CacheEntry previous = metadataCache.get(key);
+        PayloadEntry previous =
+                metadataCache.get(new MetadataKey(playerId, entityId));
 
-        if (previous != null
-                && Arrays.equals(previous.payload, payload)
-                && now - previous.lastForwardedAt < metadataRefreshMs) {
-            previous.lastTouchedAt = now;
-            stats.metadataSuppressed(playerId);
-            return true;
+        if (previous == null) {
+            return false;
         }
 
-        metadataCache.put(key, new CacheEntry(payload, now, now));
-        return false;
+        previous.lastTouchedAt = now;
+
+        if (!PayloadBuffer.matches(byteBuf, previous.payload)) {
+            return false;
+        }
+
+        if (now - previous.lastForwardedAt >= metadataRefreshMs) {
+            return false;
+        }
+
+        stats.metadataSuppressed(playerId);
+        return true;
     }
 
-    public boolean shouldSuppressUi(UUID playerId, String packetName, byte[] payload, long now) {
+    public void commitMetadata(
+            UUID playerId,
+            int entityId,
+            Object byteBuf,
+            long now
+    ) {
+        if (!runtimeEnabled || !metadataEnabled) {
+            return;
+        }
+
+        byte[] payload = PayloadBuffer.copy(byteBuf);
+
+        if (payload == null || payload.length == 0) {
+            return;
+        }
+
+        metadataCache.put(
+                new MetadataKey(playerId, entityId),
+                new PayloadEntry(payload, now)
+        );
+    }
+
+    public boolean shouldSuppressUi(
+            UUID playerId,
+            String stateKey,
+            Object byteBuf,
+            long now
+    ) {
         if (!runtimeEnabled
                 || !uiEnabled
-                || payload.length == 0
-                || !UI_STATE_PACKETS.contains(packetName)) {
+                || stateKey == null
+                || byteBuf == null) {
             return false;
         }
 
-        PayloadKey key = new PayloadKey(playerId, packetName, payload);
-        Long previous = uiRecent.put(key, now);
+        PayloadEntry previous =
+                uiStateCache.get(new UiStateKey(playerId, stateKey));
 
-        if (previous != null && now - previous < uiWindowMs) {
-            stats.uiSuppressed(playerId);
-            return true;
+        if (previous == null) {
+            return false;
         }
 
-        return false;
+        previous.lastTouchedAt = now;
+
+        if (!PayloadBuffer.matches(byteBuf, previous.payload)) {
+            return false;
+        }
+
+        if (now - previous.lastForwardedAt >= uiRefreshMs) {
+            return false;
+        }
+
+        stats.uiSuppressed(playerId);
+        return true;
+    }
+
+    public void commitUi(
+            UUID playerId,
+            String stateKey,
+            Object byteBuf,
+            long now
+    ) {
+        if (!runtimeEnabled || !uiEnabled || stateKey == null) {
+            return;
+        }
+
+        byte[] payload = PayloadBuffer.copy(byteBuf);
+
+        if (payload == null || payload.length == 0) {
+            return;
+        }
+
+        uiStateCache.put(
+                new UiStateKey(playerId, stateKey),
+                new PayloadEntry(payload, now)
+        );
     }
 
     public boolean shouldSuppressParticle(UUID playerId, long now) {
@@ -161,7 +265,8 @@ public final class PacketOptimizationEngine {
         }
 
         ProfileSnapshot snapshot = profiler.snapshot(playerId);
-        LatencyGuardian.Mode mode = latencyGuardian.mode(playerId, snapshot);
+        LatencyGuardian.Mode mode =
+                latencyGuardian.mode(playerId, snapshot);
 
         int allowed = particleMax;
 
@@ -170,11 +275,13 @@ public final class PacketOptimizationEngine {
         } else if (mode == LatencyGuardian.Mode.PRESSURE) {
             allowed = Math.min(allowed, pressureParticleMax);
         } else if (particleAdaptive
-                && (snapshot.burst() || snapshot.pingMs() >= particleHighPingMs)) {
+                && (snapshot.burst()
+                || snapshot.pingMs() >= particleHighPingMs)) {
             allowed = Math.min(allowed, particleAdaptiveMax);
         }
 
         long second = now / 1000L;
+
         ParticleWindow window = particleWindows.computeIfAbsent(
                 playerId,
                 ignored -> new ParticleWindow(second)
@@ -210,8 +317,14 @@ public final class PacketOptimizationEngine {
     }
 
     public void clearPlayer(UUID playerId) {
-        metadataCache.keySet().removeIf(key -> key.playerId.equals(playerId));
-        uiRecent.keySet().removeIf(key -> key.playerId.equals(playerId));
+        metadataCache.keySet().removeIf(
+                key -> key.playerId.equals(playerId)
+        );
+
+        uiStateCache.keySet().removeIf(
+                key -> key.playerId.equals(playerId)
+        );
+
         particleWindows.remove(playerId);
     }
 
@@ -221,36 +334,38 @@ public final class PacketOptimizationEngine {
     }
 
     public void cleanup() {
-        long now = System.currentTimeMillis();
-        long metadataCutoff = now - staleEntryMs;
-        long uiCutoff = now - Math.max(10000L, uiWindowMs * 2L);
+        long cutoff = System.currentTimeMillis() - staleEntryMs;
 
         metadataCache.entrySet().removeIf(
-                entry -> entry.getValue().lastTouchedAt < metadataCutoff
+                entry -> entry.getValue().lastTouchedAt < cutoff
         );
-        uiRecent.entrySet().removeIf(
-                entry -> entry.getValue() < uiCutoff
+
+        uiStateCache.entrySet().removeIf(
+                entry -> entry.getValue().lastTouchedAt < cutoff
         );
     }
 
     private void clearCaches() {
         metadataCache.clear();
-        uiRecent.clear();
+        uiStateCache.clear();
         particleWindows.clear();
     }
 
     private record MetadataKey(UUID playerId, int entityId) {
     }
 
-    private static final class CacheEntry {
+    private record UiStateKey(UUID playerId, String stateKey) {
+    }
+
+    private static final class PayloadEntry {
         private final byte[] payload;
         private final long lastForwardedAt;
         private volatile long lastTouchedAt;
 
-        private CacheEntry(byte[] payload, long lastForwardedAt, long lastTouchedAt) {
-            this.payload = Arrays.copyOf(payload, payload.length);
-            this.lastForwardedAt = lastForwardedAt;
-            this.lastTouchedAt = lastTouchedAt;
+        private PayloadEntry(byte[] payload, long now) {
+            this.payload = payload;
+            this.lastForwardedAt = now;
+            this.lastTouchedAt = now;
         }
     }
 
@@ -260,39 +375,6 @@ public final class PacketOptimizationEngine {
 
         private ParticleWindow(long second) {
             this.second = second;
-        }
-    }
-
-    private static final class PayloadKey {
-        private final UUID playerId;
-        private final String packetName;
-        private final byte[] payload;
-        private final int hash;
-
-        private PayloadKey(UUID playerId, String packetName, byte[] payload) {
-            this.playerId = playerId;
-            this.packetName = packetName;
-            this.payload = Arrays.copyOf(payload, payload.length);
-
-            int result = playerId.hashCode();
-            result = 31 * result + packetName.hashCode();
-            result = 31 * result + Arrays.hashCode(this.payload);
-            this.hash = result;
-        }
-
-        @Override
-        public boolean equals(Object object) {
-            if (this == object) return true;
-            if (!(object instanceof PayloadKey other)) return false;
-
-            return playerId.equals(other.playerId)
-                    && packetName.equals(other.packetName)
-                    && Arrays.equals(payload, other.payload);
-        }
-
-        @Override
-        public int hashCode() {
-            return hash;
         }
     }
 }
