@@ -9,8 +9,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class VirtualEntityRegistry {
-    private final Map<UUID, Map<Integer, TrackedEntity>> perViewer =
+    private final ConcurrentHashMap<UUID, ConcurrentHashMap<Integer, TrackedEntity>> perViewer =
             new ConcurrentHashMap<>();
+
+    private volatile int maxEntitiesPerViewer = 4096;
+    private volatile long staleEntityMs = 300000L;
+
+    public void configure(
+            int maxEntitiesPerViewer,
+            long staleEntityMs
+    ) {
+        this.maxEntitiesPerViewer =
+                Math.max(256, maxEntitiesPerViewer);
+        this.staleEntityMs =
+                Math.max(60000L, staleEntityMs);
+
+        trimAllToLimit();
+    }
 
     public void recordSpawn(
             UUID viewerId,
@@ -19,20 +34,26 @@ public final class VirtualEntityRegistry {
             String spawnPacket,
             String entityType
     ) {
-        long now = System.currentTimeMillis();
+        if (viewerId == null) {
+            return;
+        }
 
-        perViewer
-                .computeIfAbsent(viewerId, ignored -> new ConcurrentHashMap<>())
-                .put(
-                        entityId,
-                        new TrackedEntity(
-                                entityId,
-                                entityUuid,
-                                safe(spawnPacket, "SPAWN_UNKNOWN"),
-                                safe(entityType, "UNKNOWN"),
-                                now
-                        )
+        long now = System.currentTimeMillis();
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.computeIfAbsent(
+                        viewerId,
+                        ignored -> new ConcurrentHashMap<>()
                 );
+
+        TrackedEntity tracked = new TrackedEntity(
+                entityId,
+                entityUuid,
+                safe(spawnPacket, "SPAWN_UNKNOWN"),
+                safe(entityType, "UNKNOWN"),
+                now
+        );
+
+        putBounded(entities, entityId, tracked);
     }
 
     public void recordActivity(
@@ -40,20 +61,30 @@ public final class VirtualEntityRegistry {
             int entityId,
             String packetName
     ) {
-        long now = System.currentTimeMillis();
+        if (viewerId == null) {
+            return;
+        }
 
-        TrackedEntity entity = perViewer
-                .computeIfAbsent(viewerId, ignored -> new ConcurrentHashMap<>())
-                .computeIfAbsent(
-                        entityId,
-                        ignored -> new TrackedEntity(
-                                entityId,
-                                null,
-                                "SPAWN_NOT_OBSERVED",
-                                "UNKNOWN",
-                                now
-                        )
+        long now = System.currentTimeMillis();
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.computeIfAbsent(
+                        viewerId,
+                        ignored -> new ConcurrentHashMap<>()
                 );
+
+        TrackedEntity entity = entities.get(entityId);
+
+        if (entity == null) {
+            entity = createIfCapacity(
+                    entities,
+                    entityId,
+                    now
+            );
+
+            if (entity == null) {
+                return;
+            }
+        }
 
         entity.lastSeenAt = now;
 
@@ -67,26 +98,37 @@ public final class VirtualEntityRegistry {
     }
 
     public void recordDestroy(UUID viewerId, int entityId) {
-        Map<Integer, TrackedEntity> entities = perViewer.get(viewerId);
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.get(viewerId);
+
         if (entities != null) {
             entities.remove(entityId);
+
+            if (entities.isEmpty()) {
+                perViewer.remove(viewerId, entities);
+            }
         }
     }
 
     public Optional<Snapshot> find(UUID viewerId, int entityId) {
-        Map<Integer, TrackedEntity> entities = perViewer.get(viewerId);
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.get(viewerId);
+
         if (entities == null) {
             return Optional.empty();
         }
 
         TrackedEntity entity = entities.get(entityId);
+
         return entity == null
                 ? Optional.empty()
                 : Optional.of(entity.snapshot());
     }
 
     public List<Snapshot> snapshot(UUID viewerId) {
-        Map<Integer, TrackedEntity> entities = perViewer.get(viewerId);
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.get(viewerId);
+
         if (entities == null) {
             return List.of();
         }
@@ -98,7 +140,9 @@ public final class VirtualEntityRegistry {
     }
 
     public void resetActivity(UUID viewerId) {
-        Map<Integer, TrackedEntity> entities = perViewer.get(viewerId);
+        ConcurrentHashMap<Integer, TrackedEntity> entities =
+                perViewer.get(viewerId);
+
         if (entities == null) {
             return;
         }
@@ -116,12 +160,121 @@ public final class VirtualEntityRegistry {
         }
     }
 
+    public void cleanup() {
+        long cutoff = System.currentTimeMillis() - staleEntityMs;
+
+        for (Map.Entry<UUID, ConcurrentHashMap<Integer, TrackedEntity>> viewer
+                : perViewer.entrySet()) {
+            ConcurrentHashMap<Integer, TrackedEntity> entities =
+                    viewer.getValue();
+
+            entities.entrySet().removeIf(
+                    entry -> entry.getValue().lastSeenAt < cutoff
+            );
+
+            trimToLimit(entities);
+
+            if (entities.isEmpty()) {
+                perViewer.remove(viewer.getKey(), entities);
+            }
+        }
+    }
+
     public void clearPlayer(UUID viewerId) {
         perViewer.remove(viewerId);
     }
 
+    public void clearAll() {
+        perViewer.clear();
+    }
+
+    private TrackedEntity createIfCapacity(
+            ConcurrentHashMap<Integer, TrackedEntity> entities,
+            int entityId,
+            long now
+    ) {
+        synchronized (entities) {
+            TrackedEntity existing = entities.get(entityId);
+
+            if (existing != null) {
+                return existing;
+            }
+
+            if (entities.size() >= maxEntitiesPerViewer) {
+                return null;
+            }
+
+            TrackedEntity created = new TrackedEntity(
+                    entityId,
+                    null,
+                    "SPAWN_NOT_OBSERVED",
+                    "UNKNOWN",
+                    now
+            );
+
+            entities.put(entityId, created);
+            return created;
+        }
+    }
+
+    private void putBounded(
+            ConcurrentHashMap<Integer, TrackedEntity> entities,
+            int entityId,
+            TrackedEntity tracked
+    ) {
+        TrackedEntity existing = entities.get(entityId);
+
+        if (existing != null
+                && entities.replace(entityId, existing, tracked)) {
+            return;
+        }
+
+        synchronized (entities) {
+            existing = entities.get(entityId);
+
+            if (existing != null) {
+                entities.put(entityId, tracked);
+                return;
+            }
+
+            if (entities.size() >= maxEntitiesPerViewer) {
+                return;
+            }
+
+            entities.put(entityId, tracked);
+        }
+    }
+
+    private void trimAllToLimit() {
+        for (ConcurrentHashMap<Integer, TrackedEntity> entities
+                : perViewer.values()) {
+            trimToLimit(entities);
+        }
+    }
+
+    private void trimToLimit(
+            ConcurrentHashMap<Integer, TrackedEntity> entities
+    ) {
+        int excess = entities.size() - maxEntitiesPerViewer;
+
+        if (excess <= 0) {
+            return;
+        }
+
+        entities.entrySet().stream()
+                .sorted(Comparator.comparingLong(
+                        entry -> entry.getValue().lastSeenAt
+                ))
+                .limit(excess)
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(entities::remove);
+    }
+
     private static String safe(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
+        return value == null || value.isBlank()
+                ? fallback
+                : value;
     }
 
     private static final class TrackedEntity {
