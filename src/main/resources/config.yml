@@ -38,7 +38,9 @@ optimizer:
     # Hard safety bounds. Reaching a limit disables caching for new keys
     # until entries are removed. Packets are forwarded normally.
     metadata-max-entries: 16384
+    metadata-max-entries-per-player: 2048
     ui-max-entries: 4096
+    ui-max-entries-per-player: 512
     particle-window-max-entries: 2048
 
     # Oversized payloads are not retained for dedupe.
