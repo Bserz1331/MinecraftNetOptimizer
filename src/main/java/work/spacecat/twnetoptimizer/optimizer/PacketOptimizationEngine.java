@@ -5,7 +5,6 @@ import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -98,7 +97,7 @@ public final class PacketOptimizationEngine {
             byte[] payload,
             long now
     ) {
-        if (!runtimeEnabled || !metadataEnabled) {
+        if (!runtimeEnabled || !metadataEnabled || payload.length == 0) {
             return false;
         }
 
@@ -123,7 +122,10 @@ public final class PacketOptimizationEngine {
             byte[] payload,
             long now
     ) {
-        if (!runtimeEnabled || !uiEnabled || !UI_STATE_PACKETS.contains(packetName)) {
+        if (!runtimeEnabled
+                || !uiEnabled
+                || payload.length == 0
+                || !UI_STATE_PACKETS.contains(packetName)) {
             return false;
         }
 
@@ -197,16 +199,16 @@ public final class PacketOptimizationEngine {
     }
 
     public void cleanup() {
-        long cutoff = System.currentTimeMillis() - staleEntryMs;
+        long now = System.currentTimeMillis();
+        long metadataCutoff = now - staleEntryMs;
+        long uiCutoff = now - Math.max(10000L, uiWindowMs * 2L);
 
-        metadataCache.entrySet().removeIf(entry -> entry.getValue().lastTouchedAt < cutoff);
-
-        Iterator<Map.Entry<PayloadKey, Long>> iterator = uiRecent.entrySet().iterator();
-        while (iterator.hasNext()) {
-            if (iterator.next().getValue() < cutoff) {
-                iterator.remove();
-            }
-        }
+        metadataCache.entrySet().removeIf(
+                entry -> entry.getValue().lastTouchedAt < metadataCutoff
+        );
+        uiRecent.entrySet().removeIf(
+                entry -> entry.getValue() < uiCutoff
+        );
     }
 
     private void clearCaches() {
