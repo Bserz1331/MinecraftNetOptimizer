@@ -36,18 +36,28 @@ public final class NetworkProfiler {
         }
     }
 
-    public void record(
+    public void recordInbound(
             UUID playerId,
-            TrafficDirection direction,
             int observedBytes,
             String packetName
     ) {
-        if (playerId == null) {
-            return;
-        }
+        profile(playerId).recordInbound(observedBytes, packetName);
+    }
 
-        profiles.computeIfAbsent(playerId, PlayerNetworkProfile::new)
-                .record(direction, observedBytes, packetName);
+    public void recordRawOutbound(
+            UUID playerId,
+            int observedBytes,
+            String packetName
+    ) {
+        profile(playerId).recordRawOutbound(observedBytes, packetName);
+    }
+
+    public void recordForwardedOutbound(
+            UUID playerId,
+            int observedBytes,
+            String packetName
+    ) {
+        profile(playerId).recordForwardedOutbound(observedBytes, packetName);
     }
 
     public ProfileSnapshot snapshot(UUID playerId) {
@@ -73,6 +83,14 @@ public final class NetworkProfiler {
 
     public void remove(UUID playerId) {
         profiles.remove(playerId);
+    }
+
+    private PlayerNetworkProfile profile(UUID playerId) {
+        if (playerId == null) {
+            throw new IllegalArgumentException("playerId");
+        }
+
+        return profiles.computeIfAbsent(playerId, PlayerNetworkProfile::new);
     }
 
     private void sampleOnlinePlayers() {
@@ -114,7 +132,8 @@ public final class NetworkProfiler {
             if (logBursts && snapshot.burst()) {
                 plugin.getLogger().warning(
                         "Network burst for " + player.getName()
-                                + ": " + snapshot.outboundPackets() + " packets/s, "
+                                + ": forwarded "
+                                + snapshot.outboundPackets() + " packets/s, "
                                 + snapshot.outboundObservedBytes()
                                 + " observed bytes/s"
                 );

@@ -15,12 +15,19 @@ import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 import work.spacecat.twnetoptimizer.server.AdviceEngine;
 import work.spacecat.twnetoptimizer.server.ServerDiagnostics;
 import work.spacecat.twnetoptimizer.trace.EntityTraceService;
+import work.spacecat.twnetoptimizer.trace.VirtualEntityRegistry;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 public final class NetDebugCommand implements CommandExecutor, TabCompleter {
     private final TWNetOptimizerPlugin plugin;
@@ -53,15 +60,22 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
             case "advice" -> showAdvice(sender);
             case "trace" -> startTrace(sender, args);
             case "entities" -> showEntities(sender, args);
+            case "virtual" -> showVirtual(sender, args);
             case "optimize" -> optimize(sender, args);
             case "reset" -> {
                 plugin.getProfiler().reset();
                 plugin.getOptimizer().reset();
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Profiler and optimizer counters reset.");
+                plugin.getVirtualEntityRegistry().resetAllActivity();
+                sender.sendMessage(
+                        prefix() + ChatColor.GREEN
+                                + "Profiler, optimizer and virtual-entity activity counters reset."
+                );
             }
             case "reload" -> {
                 plugin.reloadRuntimeConfig();
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Configuration reloaded.");
+                sender.sendMessage(
+                        prefix() + ChatColor.GREEN + "Configuration reloaded."
+                );
             }
             default -> {
                 Player target = Bukkit.getPlayerExact(args[0]);
@@ -110,7 +124,8 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + colorMspt(mspt) + format(mspt) + " ms"
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Suppressed: " + ChatColor.WHITE
+                ChatColor.GRAY + "TWNO suppressed since reset: "
+                        + ChatColor.WHITE
                         + optimization.totalSuppressed()
                         + " total (metadata "
                         + optimization.metadataSuppressed()
@@ -122,7 +137,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         );
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Critical movement/teleport/velocity/combat/inventory/chunk/KeepAlive packets are excluded."
+                        + "Raw/forwarded per-second traffic is available with /netdebug <player>."
         );
     }
 
@@ -158,37 +173,63 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + snapshot.pingMs() + " ms"
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Packets: " + ChatColor.WHITE
-                        + snapshot.inboundPackets() + " in/s, "
-                        + snapshot.outboundPackets() + " out/s"
+                ChatColor.GRAY + "Inbound: " + ChatColor.WHITE
+                        + snapshot.inboundPackets() + " pkt/s, "
+                        + humanBytes(snapshot.inboundObservedBytes()) + "/s"
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Observed bytes: " + ChatColor.WHITE
-                        + humanBytes(snapshot.inboundObservedBytes()) + " in/s, "
-                        + humanBytes(snapshot.outboundObservedBytes()) + " out/s"
+                ChatColor.GRAY + "Raw outbound: " + ChatColor.WHITE
+                        + snapshot.rawOutboundPackets() + " pkt/s, "
+                        + humanBytes(snapshot.rawOutboundObservedBytes()) + "/s"
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Outbound mix: " + ChatColor.WHITE
+                ChatColor.GRAY + "Forwarded outbound: " + ChatColor.WHITE
+                        + snapshot.outboundPackets() + " pkt/s, "
+                        + humanBytes(snapshot.outboundObservedBytes()) + "/s"
+        );
+        sender.sendMessage(
+                ChatColor.GRAY + "Not forwarded: "
+                        + reductionColor(snapshot.packetReductionPercent())
+                        + snapshot.notForwardedPackets() + " pkt/s ("
+                        + format(snapshot.packetReductionPercent()) + "%), "
+                        + humanBytes(snapshot.notForwardedObservedBytes()) + "/s"
+        );
+        sender.sendMessage(
+                ChatColor.GRAY + "Forwarded mix: " + ChatColor.WHITE
                         + "chunk " + format(chunkShare)
                         + "% / entity " + format(entityShare)
                         + "% / UI " + format(uiShare) + "%"
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Burst: "
+                ChatColor.GRAY + "Burst after filtering: "
                         + (snapshot.burst()
                         ? ChatColor.RED + "HIGH"
                         : ChatColor.GREEN + "normal")
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Suppressed since reset: " + ChatColor.WHITE
+                ChatColor.GRAY + "TWNO suppressed since reset: "
+                        + ChatColor.WHITE
                         + optimization.totalSuppressed()
                         + " (metadata " + optimization.metadataSuppressed()
                         + " / UI " + optimization.uiSuppressed()
                         + " / particles " + optimization.particleSuppressed() + ")"
         );
 
+        if (!snapshot.topRawOutboundTypes().isEmpty()) {
+            sender.sendMessage(ChatColor.GRAY + "Top raw outbound:");
+            for (ProfileSnapshot.PacketTypeCount item
+                    : snapshot.topRawOutboundTypes()) {
+                sender.sendMessage(
+                        ChatColor.DARK_GRAY + "  - " + ChatColor.WHITE
+                                + item.packetName()
+                                + ChatColor.GRAY + ": "
+                                + item.count() + "/s"
+                );
+            }
+        }
+
         if (!snapshot.topOutboundTypes().isEmpty()) {
-            sender.sendMessage(ChatColor.GRAY + "Top outbound packets:");
+            sender.sendMessage(ChatColor.GRAY + "Top forwarded outbound:");
             for (ProfileSnapshot.PacketTypeCount item
                     : snapshot.topOutboundTypes()) {
                 sender.sendMessage(
@@ -202,7 +243,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Observed bytes are PacketEvents buffer bytes, not NIC wire bytes."
+                        + "Observed bytes are PacketEvents-layer bytes, not NIC wire bytes."
         );
     }
 
@@ -211,7 +252,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                 plugin.getProfiler().topOutbound(10);
 
         sender.sendMessage(
-                ChatColor.DARK_AQUA + "----- Top outbound traffic -----"
+                ChatColor.DARK_AQUA + "----- Top forwarded traffic -----"
         );
 
         if (snapshots.isEmpty()) {
@@ -232,6 +273,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                             + ChatColor.GRAY + " - "
                             + humanBytes(snapshot.outboundObservedBytes())
                             + "/s, " + snapshot.outboundPackets() + " pkt/s"
+                            + " (raw " + snapshot.rawOutboundPackets() + ")"
                             + (snapshot.burst()
                             ? ChatColor.RED + " BURST"
                             : "")
@@ -241,30 +283,46 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private void startTrace(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "Usage: /netdebug trace <player> [seconds]");
+            sender.sendMessage(
+                    prefix() + ChatColor.YELLOW
+                            + "Usage: /netdebug trace <player> [seconds]"
+            );
             return;
         }
 
         Player target = Bukkit.getPlayerExact(args[1]);
         if (target == null) {
-            sender.sendMessage(prefix() + ChatColor.RED + "Player not found: " + args[1]);
+            sender.sendMessage(
+                    prefix() + ChatColor.RED + "Player not found: " + args[1]
+            );
             return;
         }
 
-        int seconds = plugin.getConfig().getInt("trace.default-seconds", 10);
+        int seconds = plugin.getConfig().getInt(
+                "trace.default-seconds",
+                10
+        );
+
         if (args.length >= 3) {
             try {
                 seconds = Integer.parseInt(args[2]);
             } catch (NumberFormatException ignored) {
-                sender.sendMessage(prefix() + ChatColor.RED + "Seconds must be a number.");
+                sender.sendMessage(
+                        prefix() + ChatColor.RED + "Seconds must be a number."
+                );
                 return;
             }
         }
 
-        int maxSeconds = Math.max(1, plugin.getConfig().getInt("trace.max-seconds", 60));
+        int maxSeconds = Math.max(
+                1,
+                plugin.getConfig().getInt("trace.max-seconds", 60)
+        );
+
         seconds = Math.max(1, Math.min(seconds, maxSeconds));
 
         plugin.getTraceService().start(target.getUniqueId(), seconds);
+
         sender.sendMessage(
                 prefix() + ChatColor.GREEN
                         + "Tracing ENTITY_METADATA / TELEPORT / VELOCITY for "
@@ -274,19 +332,31 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private void showEntities(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "Usage: /netdebug entities <player>");
+            sender.sendMessage(
+                    prefix() + ChatColor.YELLOW
+                            + "Usage: /netdebug entities <player>"
+            );
             return;
         }
 
         Player target = Bukkit.getPlayerExact(args[1]);
         if (target == null) {
-            sender.sendMessage(prefix() + ChatColor.RED + "Player not found: " + args[1]);
+            sender.sendMessage(
+                    prefix() + ChatColor.RED + "Player not found: " + args[1]
+            );
             return;
         }
 
-        int limit = Math.max(1, plugin.getConfig().getInt("trace.top-entities", 15));
+        int limit = Math.max(
+                1,
+                plugin.getConfig().getInt("trace.top-entities", 15)
+        );
+
         EntityTraceService.TraceSnapshot snapshot =
-                plugin.getTraceService().snapshot(target.getUniqueId(), limit);
+                plugin.getTraceService().snapshot(
+                        target.getUniqueId(),
+                        limit
+                );
 
         sender.sendMessage(
                 ChatColor.DARK_AQUA
@@ -312,11 +382,19 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         }
 
         int virtual = 0;
+
         for (EntityTraceService.EntityPacketCount item : snapshot.entities()) {
             String type = types.get(item.entityId());
+
             if (type == null) {
-                type = "UNKNOWN / VIRTUAL";
                 virtual++;
+
+                type = plugin.getVirtualEntityRegistry()
+                        .find(target.getUniqueId(), item.entityId())
+                        .map(info ->
+                                "VIRTUAL " + info.entityType()
+                                        + " [" + info.spawnPacket() + "]")
+                        .orElse("UNKNOWN / VIRTUAL");
             }
 
             sender.sendMessage(
@@ -330,15 +408,127 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         }
 
         sender.sendMessage(
-                ChatColor.GRAY + "Top-list unknown/virtual IDs: "
+                ChatColor.GRAY + "Top-list virtual IDs: "
                         + ChatColor.WHITE + virtual
         );
+    }
+
+    private void showVirtual(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(
+                    prefix() + ChatColor.YELLOW
+                            + "Usage: /netdebug virtual <player>"
+            );
+            return;
+        }
+
+        Player target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) {
+            sender.sendMessage(
+                    prefix() + ChatColor.RED + "Player not found: " + args[1]
+            );
+            return;
+        }
+
+        UUID viewerId = target.getUniqueId();
+        Set<Integer> bukkitEntityIds = allLoadedBukkitEntityIds();
+
+        List<VirtualEntityRegistry.Snapshot> all =
+                plugin.getVirtualEntityRegistry().snapshot(viewerId);
+
+        List<VirtualEntityRegistry.Snapshot> virtual = all.stream()
+                .filter(item -> !bukkitEntityIds.contains(item.entityId()))
+                .sorted(
+                        Comparator.comparingLong(
+                                VirtualEntityRegistry.Snapshot::totalActivity
+                        ).reversed()
+                )
+                .toList();
+
+        sender.sendMessage(
+                ChatColor.DARK_AQUA
+                        + "----- Virtual entities: " + target.getName() + " -----"
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY + "Tracked client entity IDs: "
+                        + ChatColor.WHITE + all.size()
+                        + ChatColor.GRAY + " / virtual: "
+                        + ChatColor.WHITE + virtual.size()
+        );
+
+        if (virtual.isEmpty()) {
+            sender.sendMessage(
+                    ChatColor.GRAY
+                            + "No currently tracked virtual entity IDs."
+            );
+            return;
+        }
+
+        Map<String, Long> typeCounts = virtual.stream()
+                .collect(
+                        Collectors.groupingBy(
+                                VirtualEntityRegistry.Snapshot::entityType,
+                                Collectors.counting()
+                        )
+                );
+
+        LinkedHashMap<String, Long> sortedTypes = typeCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .limit(5)
+                .collect(
+                        Collectors.toMap(
+                                Map.Entry::getKey,
+                                Map.Entry::getValue,
+                                (left, right) -> left,
+                                LinkedHashMap::new
+                        )
+                );
+
+        sender.sendMessage(ChatColor.GRAY + "Top virtual spawn types:");
+        for (Map.Entry<String, Long> entry : sortedTypes.entrySet()) {
+            sender.sendMessage(
+                    ChatColor.DARK_GRAY + "  - "
+                            + ChatColor.WHITE + entry.getKey()
+                            + ChatColor.GRAY + ": " + entry.getValue()
+            );
+        }
+
+        int limit = Math.max(
+                1,
+                plugin.getConfig().getInt(
+                        "trace.top-virtual-entities",
+                        15
+                )
+        );
+
+        sender.sendMessage(ChatColor.GRAY + "Top virtual entity activity:");
+
+        virtual.stream()
+                .limit(limit)
+                .forEach(item ->
+                        sender.sendMessage(
+                                ChatColor.DARK_GRAY + "  #"
+                                        + item.entityId()
+                                        + ChatColor.WHITE + " "
+                                        + item.entityType()
+                                        + ChatColor.GRAY
+                                        + " uuid=" + item.shortUuid()
+                                        + " spawn=" + item.spawnPacket()
+                                        + " total=" + item.totalActivity()
+                                        + " meta=" + item.metadata()
+                                        + " tp=" + item.teleport()
+                                        + " vel=" + item.velocity()
+                        )
+                );
     }
 
     private void showServer(CommandSender sender) {
         ServerDiagnostics.Snapshot snapshot = ServerDiagnostics.capture();
 
-        sender.sendMessage(ChatColor.DARK_AQUA + "----- Server diagnostics -----");
+        sender.sendMessage(
+                ChatColor.DARK_AQUA + "----- Server diagnostics -----"
+        );
         sender.sendMessage(
                 ChatColor.GRAY + "TPS / MSPT: " + ChatColor.WHITE
                         + format(snapshot.tps()) + " / "
@@ -350,12 +540,14 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + snapshot.simulationDistance()
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Loaded chunks / entities: " + ChatColor.WHITE
+                ChatColor.GRAY + "Loaded chunks / entities: "
+                        + ChatColor.WHITE
                         + snapshot.loadedChunks() + " / "
                         + snapshot.totalEntities()
         );
         sender.sendMessage(
-                ChatColor.GRAY + "Players / avg ping: " + ChatColor.WHITE
+                ChatColor.GRAY + "Players / avg ping: "
+                        + ChatColor.WHITE
                         + snapshot.onlinePlayers() + " / "
                         + format(snapshot.averagePing()) + " ms"
         );
@@ -372,8 +564,12 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         }
 
         if (!snapshot.pendingTasksByPlugin().isEmpty()) {
-            sender.sendMessage(ChatColor.GRAY + "Pending scheduler tasks by plugin:");
-            for (ServerDiagnostics.NameCount item : snapshot.pendingTasksByPlugin()) {
+            sender.sendMessage(
+                    ChatColor.GRAY + "Pending scheduler tasks by plugin:"
+            );
+
+            for (ServerDiagnostics.NameCount item
+                    : snapshot.pendingTasksByPlugin()) {
                 sender.sendMessage(
                         ChatColor.DARK_GRAY + "  - "
                                 + ChatColor.WHITE + item.name()
@@ -385,13 +581,17 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private void showAdvice(CommandSender sender) {
         ServerDiagnostics.Snapshot server = ServerDiagnostics.capture();
+
         List<String> advice = AdviceEngine.build(
                 server,
                 plugin.getProfiler().topOutbound(20),
                 plugin.getOptimizer().stats().totalSnapshot()
         );
 
-        sender.sendMessage(ChatColor.DARK_AQUA + "----- TWNetOptimizer advice -----");
+        sender.sendMessage(
+                ChatColor.DARK_AQUA + "----- TWNetOptimizer advice -----"
+        );
+
         int index = 1;
         for (String line : advice) {
             sender.sendMessage(
@@ -402,7 +602,8 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
     }
 
     private void optimize(CommandSender sender, String[] args) {
-        if (args.length < 2 || args[1].equalsIgnoreCase("status")) {
+        if (args.length < 2
+                || args[1].equalsIgnoreCase("status")) {
             sender.sendMessage(
                     prefix() + ChatColor.GRAY + "Optimizer is "
                             + (plugin.getOptimizer().isEnabled()
@@ -415,15 +616,23 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         switch (args[1].toLowerCase(Locale.ROOT)) {
             case "on" -> {
                 plugin.getOptimizer().setEnabled(true);
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Safe optimizer enabled.");
+                sender.sendMessage(
+                        prefix() + ChatColor.GREEN + "Safe optimizer enabled."
+                );
             }
             case "off" -> {
                 plugin.getOptimizer().setEnabled(false);
-                sender.sendMessage(prefix() + ChatColor.YELLOW + "Optimizer disabled and caches cleared.");
+                sender.sendMessage(
+                        prefix() + ChatColor.YELLOW
+                                + "Optimizer disabled and caches cleared."
+                );
             }
             case "reset" -> {
                 plugin.getOptimizer().reset();
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Optimizer counters and caches reset.");
+                sender.sendMessage(
+                        prefix() + ChatColor.GREEN
+                                + "Optimizer counters and caches reset."
+                );
             }
             default -> sender.sendMessage(
                     prefix() + ChatColor.YELLOW
@@ -441,6 +650,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
     ) {
         if (args.length == 1) {
             String input = args[0].toLowerCase(Locale.ROOT);
+
             List<String> options = new ArrayList<>(List.of(
                     "status",
                     "top",
@@ -448,10 +658,12 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                     "advice",
                     "trace",
                     "entities",
+                    "virtual",
                     "optimize",
                     "reset",
                     "reload"
             ));
+
             Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
                     .forEach(options::add);
@@ -465,17 +677,22 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 2
                 && (args[0].equalsIgnoreCase("trace")
-                || args[0].equalsIgnoreCase("entities"))) {
+                || args[0].equalsIgnoreCase("entities")
+                || args[0].equalsIgnoreCase("virtual"))) {
             String input = args[1].toLowerCase(Locale.ROOT);
+
             return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
-                    .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(input))
+                    .filter(name ->
+                            name.toLowerCase(Locale.ROOT).startsWith(input))
                     .sorted(String.CASE_INSENSITIVE_ORDER)
                     .toList();
         }
 
-        if (args.length == 2 && args[0].equalsIgnoreCase("optimize")) {
+        if (args.length == 2
+                && args[0].equalsIgnoreCase("optimize")) {
             String input = args[1].toLowerCase(Locale.ROOT);
+
             return List.of("status", "on", "off", "reset").stream()
                     .filter(option -> option.startsWith(input))
                     .toList();
@@ -486,9 +703,23 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private static Map<Integer, String> loadedEntityTypes(World world) {
         Map<Integer, String> result = new HashMap<>();
+
         for (Entity entity : world.getEntities()) {
             result.put(entity.getEntityId(), entity.getType().name());
         }
+
+        return result;
+    }
+
+    private static Set<Integer> allLoadedBukkitEntityIds() {
+        Set<Integer> result = new HashSet<>();
+
+        for (World world : Bukkit.getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+                result.add(entity.getEntityId());
+            }
+        }
+
         return result;
     }
 
@@ -513,6 +744,12 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
         if (mspt < 40.0) return ChatColor.GREEN;
         if (mspt < 50.0) return ChatColor.YELLOW;
         return ChatColor.RED;
+    }
+
+    private static ChatColor reductionColor(double percent) {
+        if (percent >= 25.0) return ChatColor.GREEN;
+        if (percent > 0.0) return ChatColor.YELLOW;
+        return ChatColor.WHITE;
     }
 
     private static String format(double value) {

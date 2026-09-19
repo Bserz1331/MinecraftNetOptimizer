@@ -14,11 +14,13 @@ import work.spacecat.twnetoptimizer.optimizer.PacketOptimizationEngine;
 import work.spacecat.twnetoptimizer.packetevents.PacketEventsBridge;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.trace.EntityTraceService;
+import work.spacecat.twnetoptimizer.trace.VirtualEntityRegistry;
 
 public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     private NetworkProfiler profiler;
     private PacketOptimizationEngine optimizer;
     private EntityTraceService traceService;
+    private VirtualEntityRegistry virtualEntityRegistry;
     private PacketEventsBridge packetEventsBridge;
     private boolean packetEventsActive;
     private int cleanupTaskId = -1;
@@ -32,6 +34,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
         optimizer = new PacketOptimizationEngine(this, profiler);
         traceService = new EntityTraceService();
+        virtualEntityRegistry = new VirtualEntityRegistry();
 
         registerCommands();
         getServer().getPluginManager().registerEvents(this, this);
@@ -46,6 +49,9 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
         getLogger().info("TWNetOptimizer enabled in OPTIMIZE-SAFE mode.");
         getLogger().info(
+                "Raw and forwarded outbound traffic are measured separately."
+        );
+        getLogger().info(
                 "Critical movement, teleport, velocity, combat, inventory, chunk/world consistency and KeepAlive packets are not filtered."
         );
     }
@@ -57,7 +63,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
                 packetEventsBridge.unregister();
             } catch (RuntimeException ex) {
                 getLogger().warning(
-                        "Could not unregister PacketEvents listener cleanly: "
+                        "Could not unregister PacketEvents listeners cleanly: "
                                 + ex.getMessage()
                 );
             }
@@ -85,10 +91,13 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        clearPlayerState(event.getPlayer().getUniqueId());
-        profiler.remove(event.getPlayer().getUniqueId());
-        optimizer.stats().remove(event.getPlayer().getUniqueId());
-        traceService.remove(event.getPlayer().getUniqueId());
+        java.util.UUID playerId = event.getPlayer().getUniqueId();
+
+        clearPlayerState(playerId);
+        profiler.remove(playerId);
+        optimizer.stats().remove(playerId);
+        traceService.remove(playerId);
+        virtualEntityRegistry.clearPlayer(playerId);
     }
 
     public NetworkProfiler getProfiler() {
@@ -101,6 +110,10 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
     public EntityTraceService getTraceService() {
         return traceService;
+    }
+
+    public VirtualEntityRegistry getVirtualEntityRegistry() {
+        return virtualEntityRegistry;
     }
 
     public boolean isPacketEventsActive() {
@@ -116,6 +129,10 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     private void clearPlayerState(java.util.UUID playerId) {
         if (optimizer != null) {
             optimizer.clearPlayer(playerId);
+        }
+
+        if (virtualEntityRegistry != null) {
+            virtualEntityRegistry.clearPlayer(playerId);
         }
     }
 
@@ -148,7 +165,8 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
             packetEventsBridge = new PacketEventsBridge(
                     profiler,
                     optimizer,
-                    traceService
+                    traceService,
+                    virtualEntityRegistry
             );
             packetEventsBridge.register();
             packetEventsActive = true;

@@ -6,39 +6,82 @@ import java.util.concurrent.atomic.LongAdder;
 
 final class TrafficBucket {
     final LongAdder inboundPackets = new LongAdder();
-    final LongAdder outboundPackets = new LongAdder();
     final LongAdder inboundObservedBytes = new LongAdder();
-    final LongAdder outboundObservedBytes = new LongAdder();
-
-    // These categories intentionally describe outbound traffic only.
-    final LongAdder chunkPackets = new LongAdder();
-    final LongAdder entityPackets = new LongAdder();
-    final LongAdder uiPackets = new LongAdder();
-    final LongAdder otherPackets = new LongAdder();
-
     final Map<String, LongAdder> inboundTypes = new ConcurrentHashMap<>();
-    final Map<String, LongAdder> outboundTypes = new ConcurrentHashMap<>();
 
-    void record(TrafficDirection direction, int observedBytes, String packetName, PacketCategory category) {
-        String safeName = packetName == null || packetName.isBlank() ? "UNKNOWN" : packetName;
-        int safeBytes = Math.max(0, observedBytes);
+    final LongAdder rawOutboundPackets = new LongAdder();
+    final LongAdder rawOutboundObservedBytes = new LongAdder();
+    final LongAdder rawChunkPackets = new LongAdder();
+    final LongAdder rawEntityPackets = new LongAdder();
+    final LongAdder rawUiPackets = new LongAdder();
+    final LongAdder rawOtherPackets = new LongAdder();
+    final Map<String, LongAdder> rawOutboundTypes = new ConcurrentHashMap<>();
 
-        if (direction == TrafficDirection.INBOUND) {
-            inboundPackets.increment();
-            inboundObservedBytes.add(safeBytes);
-            inboundTypes.computeIfAbsent(safeName, ignored -> new LongAdder()).increment();
-            return;
-        }
+    final LongAdder forwardedOutboundPackets = new LongAdder();
+    final LongAdder forwardedOutboundObservedBytes = new LongAdder();
+    final LongAdder forwardedChunkPackets = new LongAdder();
+    final LongAdder forwardedEntityPackets = new LongAdder();
+    final LongAdder forwardedUiPackets = new LongAdder();
+    final LongAdder forwardedOtherPackets = new LongAdder();
+    final Map<String, LongAdder> forwardedOutboundTypes = new ConcurrentHashMap<>();
 
-        outboundPackets.increment();
-        outboundObservedBytes.add(safeBytes);
-        outboundTypes.computeIfAbsent(safeName, ignored -> new LongAdder()).increment();
+    void recordInbound(int observedBytes, String packetName) {
+        String safeName = safeName(packetName);
+        inboundPackets.increment();
+        inboundObservedBytes.add(Math.max(0, observedBytes));
+        inboundTypes.computeIfAbsent(safeName, ignored -> new LongAdder()).increment();
+    }
 
+    void recordRawOutbound(int observedBytes, String packetName) {
+        String safeName = safeName(packetName);
+        PacketCategory category = PacketCategory.classify(packetName);
+
+        rawOutboundPackets.increment();
+        rawOutboundObservedBytes.add(Math.max(0, observedBytes));
+        rawOutboundTypes.computeIfAbsent(safeName, ignored -> new LongAdder()).increment();
+        incrementCategory(
+                category,
+                rawChunkPackets,
+                rawEntityPackets,
+                rawUiPackets,
+                rawOtherPackets
+        );
+    }
+
+    void recordForwardedOutbound(int observedBytes, String packetName) {
+        String safeName = safeName(packetName);
+        PacketCategory category = PacketCategory.classify(packetName);
+
+        forwardedOutboundPackets.increment();
+        forwardedOutboundObservedBytes.add(Math.max(0, observedBytes));
+        forwardedOutboundTypes.computeIfAbsent(safeName, ignored -> new LongAdder()).increment();
+        incrementCategory(
+                category,
+                forwardedChunkPackets,
+                forwardedEntityPackets,
+                forwardedUiPackets,
+                forwardedOtherPackets
+        );
+    }
+
+    private static void incrementCategory(
+            PacketCategory category,
+            LongAdder chunk,
+            LongAdder entity,
+            LongAdder ui,
+            LongAdder other
+    ) {
         switch (category) {
-            case CHUNK -> chunkPackets.increment();
-            case ENTITY -> entityPackets.increment();
-            case UI -> uiPackets.increment();
-            case OTHER -> otherPackets.increment();
+            case CHUNK -> chunk.increment();
+            case ENTITY -> entity.increment();
+            case UI -> ui.increment();
+            case OTHER -> other.increment();
         }
+    }
+
+    private static String safeName(String packetName) {
+        return packetName == null || packetName.isBlank()
+                ? "UNKNOWN"
+                : packetName;
     }
 }
