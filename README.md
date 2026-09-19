@@ -1,69 +1,122 @@
 # TWNetOptimizer
 
-TWNetOptimizer is a monitor-first network profiler for **Paper 1.20.4** servers where many players connect over long-distance routes, such as Taiwan to the US West Coast.
+TWNetOptimizer is a **Paper 1.20.4 / Java 17** network and server profiler with a conservative safe-optimization layer for long-distance Minecraft servers.
 
-The first release is intentionally conservative. It measures packet activity and server health before any optimization logic is introduced.
+## v0.3 scope
 
-## Safety boundary
+This version combines profiling, safe packet optimization, entity attribution, and server-side diagnostics.
 
-**v0.1 is monitor-only.** It does not cancel, delay, rewrite, reorder, deduplicate, suppress, or queue Minecraft packets.
+### Safe optimization
 
-Critical movement, KeepAlive, teleport confirmation, inventory, interaction, combat, and world-synchronization traffic is untouched.
+Enabled by default:
 
-## What it measures
+- **ENTITY_METADATA dedupe**
+  - keyed per player + entity ID
+  - identical metadata payload is suppressed until the state changes
+  - periodic refresh pass-through prevents indefinite cache staleness
+- **Persistent UI exact-duplicate dedupe**
+  - BOSS_BAR
+  - SCOREBOARD_OBJECTIVE
+  - UPDATE_SCORE
+  - DISPLAY_SCOREBOARD
+  - TEAMS
+  - PLAYER_LIST_HEADER_AND_FOOTER
+- **Particle throttle**
+  - cosmetic only
+  - adaptive lower cap when a player is already in burst/high-ping conditions
 
-With PacketEvents installed:
+### Explicit safety boundary
 
-- Per-player inbound / outbound packets per second
-- Per-player observed packet-buffer bytes per second
-- Top inbound / outbound packet types
-- Outbound chunk / entity / UI / other packet mix
-- Per-player burst detection
+TWNetOptimizer does **not** optimize or suppress:
 
-From Paper directly:
+- player movement
+- entity teleport
+- entity velocity
+- combat packets
+- inventory / transaction / acknowledgement packets
+- chunk/world consistency packets
+- block state packets
+- KeepAlive
 
-- Player ping
-- 1-minute TPS
-- Average MSPT
-- Online player count
+Those categories are monitored and traced, not filtered.
 
-## Important byte-count caveat
+## Why there is no arbitrary packet batching
 
-Observed bytes are the readable bytes exposed by PacketEvents at the packet-event layer. They are useful for relative profiling, but they are **not actual NIC wire bytes** after Minecraft compression, encryption, TCP framing, retransmission, or other transport effects.
+Vanilla clients expect legal Minecraft protocol packets. TWNetOptimizer does not invent a custom combined packet.
+
+Instead it reduces redundant **state updates before transport** where this can be done safely. Netty/TCP may still batch writes at the transport layer.
+
+## Entity trace
+
+Use:
+
+```
+/netdebug trace <player> 10
+/netdebug entities <player>
+```
+
+The trace attributes ENTITY_METADATA / ENTITY_TELEPORT / ENTITY_VELOCITY to entity IDs.
+
+Loaded Bukkit entities are shown by type. IDs that cannot be matched are shown as `UNKNOWN / VIRTUAL`, which is useful for diagnosing packet-only NPC/model systems.
+
+## Server diagnostics
+
+```
+/netdebug server
+/netdebug advice
+```
+
+Server diagnostics include:
+
+- TPS / MSPT
+- view distance / simulation distance
+- loaded chunk count
+- loaded entity count and top entity types
+- average player ping
+- pending Bukkit scheduler task counts by plugin
+
+The scheduler count is a diagnostic signal only. It does not prove task frequency or CPU cost.
+
+## Commands
+
+```
+/netdebug
+/netdebug <player>
+/netdebug top
+/netdebug status
+/netdebug server
+/netdebug advice
+/netdebug trace <player> [seconds]
+/netdebug entities <player>
+/netdebug optimize <status|on|off|reset>
+/netdebug reset
+/netdebug reload
+```
+
+Permission: `twnetoptimizer.admin` (default: op)
 
 ## Requirements
 
 - Paper 1.20.4
 - Java 17
-- PacketEvents 2.x recommended for packet-level profiling
+- PacketEvents 2.x for packet profiling / optimization
 
-PacketEvents is an optional external dependency. TWNetOptimizer still loads without it, but packet counters will be unavailable.
-
-## Installation
-
-1. Build or download `TWNetOptimizer-*.jar`.
-2. Put the jar in `plugins/`.
-3. Install a compatible PacketEvents 2.x jar in `plugins/` for packet-level profiling.
-4. Restart the server.
-5. Run `/netdebug status`.
-
-## Commands
-
-- `/netdebug` - show your own latest sample, or server status from console
-- `/netdebug <player>` - show one player's latest network sample
-- `/netdebug top` - show players with the highest outbound observed bytes
-- `/netdebug status` - show profiler, TPS, MSPT, and PacketEvents status
-- `/netdebug reset` - clear profiler state
-- `/netdebug reload` - reload configuration
-
-Permission: `twnetoptimizer.admin` (default: op)
+Without PacketEvents, Paper-side server diagnostics remain available but packet-level profiling and optimization are disabled.
 
 ## Build
 
-Run `mvn verify`.
+```
+mvn verify
+```
 
-GitHub Actions builds every push and pull request and uploads the plugin jar as a workflow artifact.
+GitHub Actions builds every push / pull request and uploads `TWNetOptimizer-*.jar` as an artifact.
 
-## Direction after measurement
+## Important byte-count caveat
 
-Optimization should only be added after real production samples identify excess traffic. Candidate areas include duplicate UI suppression, cosmetic throttling, and adaptive bulk-traffic budgets. Critical gameplay packets remain outside optimization paths unless separately verified.
+Observed bytes are PacketEvents buffer bytes before transport compression/encryption and are not NIC wire bytes.
+
+## Upstream optimization
+
+Packet suppression can save encoding, Netty, compression, network and client processing, but it cannot undo CPU work that another plugin already performed before creating the packet.
+
+If tracing shows one plugin/system is generating unchanged state every tick, fixing that producer with dirty flags, event-driven updates, lower update cadence, or changed-only synchronization is still the best long-term optimization.

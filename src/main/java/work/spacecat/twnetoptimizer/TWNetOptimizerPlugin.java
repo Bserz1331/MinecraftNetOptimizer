@@ -4,17 +4,24 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import work.spacecat.twnetoptimizer.command.NetDebugCommand;
+import work.spacecat.twnetoptimizer.optimizer.PacketOptimizationEngine;
 import work.spacecat.twnetoptimizer.packetevents.PacketEventsBridge;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
+import work.spacecat.twnetoptimizer.trace.EntityTraceService;
 
 public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     private NetworkProfiler profiler;
+    private PacketOptimizationEngine optimizer;
+    private EntityTraceService traceService;
     private PacketEventsBridge packetEventsBridge;
     private boolean packetEventsActive;
+    private int cleanupTaskId = -1;
 
     @Override
     public void onEnable() {
@@ -23,13 +30,23 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         profiler = new NetworkProfiler(this);
         profiler.start();
 
+        optimizer = new PacketOptimizationEngine(this, profiler);
+        traceService = new EntityTraceService();
+
         registerCommands();
         getServer().getPluginManager().registerEvents(this, this);
         enablePacketEventsBridgeIfAvailable();
 
-        getLogger().info("TWNetOptimizer enabled in MONITOR-ONLY mode.");
+        cleanupTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(
+                this,
+                optimizer::cleanup,
+                1200L,
+                1200L
+        );
+
+        getLogger().info("TWNetOptimizer enabled in OPTIMIZE-SAFE mode.");
         getLogger().info(
-                "This build does not cancel, delay, rewrite, or suppress packets."
+                "Critical movement, teleport, velocity, combat, inventory, chunk/world consistency and KeepAlive packets are not filtered."
         );
     }
 
@@ -46,20 +63,44 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
             }
         }
 
+        if (cleanupTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(cleanupTaskId);
+            cleanupTaskId = -1;
+        }
+
         if (profiler != null) {
             profiler.stop();
         }
     }
 
     @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        clearPlayerState(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
+        clearPlayerState(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        if (profiler != null) {
-            profiler.remove(event.getPlayer().getUniqueId());
-        }
+        clearPlayerState(event.getPlayer().getUniqueId());
+        profiler.remove(event.getPlayer().getUniqueId());
+        optimizer.stats().remove(event.getPlayer().getUniqueId());
+        traceService.remove(event.getPlayer().getUniqueId());
     }
 
     public NetworkProfiler getProfiler() {
         return profiler;
+    }
+
+    public PacketOptimizationEngine getOptimizer() {
+        return optimizer;
+    }
+
+    public EntityTraceService getTraceService() {
+        return traceService;
     }
 
     public boolean isPacketEventsActive() {
@@ -68,8 +109,13 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
     public void reloadRuntimeConfig() {
         reloadConfig();
-        if (profiler != null) {
-            profiler.start();
+        profiler.start();
+        optimizer.reload();
+    }
+
+    private void clearPlayerState(java.util.UUID playerId) {
+        if (optimizer != null) {
+            optimizer.clearPlayer(playerId);
         }
     }
 
@@ -93,20 +139,21 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         if (packetEvents == null || !packetEvents.isEnabled()) {
             packetEventsActive = false;
             getLogger().warning(
-                    "PacketEvents is not installed. Packet-level counters are disabled."
-            );
-            getLogger().warning(
-                    "Ping, TPS, MSPT, commands, and Paper-side diagnostics remain available."
+                    "PacketEvents is not installed. Packet-level profiling and optimization are disabled."
             );
             return;
         }
 
         try {
-            packetEventsBridge = new PacketEventsBridge(profiler);
+            packetEventsBridge = new PacketEventsBridge(
+                    profiler,
+                    optimizer,
+                    traceService
+            );
             packetEventsBridge.register();
             packetEventsActive = true;
             getLogger().info(
-                    "PacketEvents detected. Packet profiler is active."
+                    "PacketEvents detected. Packet profiler and safe optimizer are active."
             );
         } catch (LinkageError | RuntimeException ex) {
             packetEventsActive = false;
@@ -115,7 +162,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
                     "PacketEvents integration failed: " + ex.getMessage()
             );
             getLogger().severe(
-                    "TWNetOptimizer will continue without packet-level counters."
+                    "TWNetOptimizer will continue with Paper-side diagnostics only."
             );
         }
     }
