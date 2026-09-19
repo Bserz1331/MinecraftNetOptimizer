@@ -111,7 +111,13 @@ public final class PacketEventsBridge {
                 default -> {
                     if (optimizer.isUiStatePacket(packetName)) {
                         byte[] payload = copyPayload(event.getByteBuf());
-                        if (optimizer.shouldSuppressUi(playerId, packetName, payload, now)) {
+                        if (payload.length > 0
+                                && optimizer.shouldSuppressUi(
+                                playerId,
+                                packetName,
+                                payload,
+                                now
+                        )) {
                             event.setCancelled(true);
                         }
                     }
@@ -127,7 +133,7 @@ public final class PacketEventsBridge {
             byte[] payload = copyPayload(event.getByteBuf());
             int entityId = readFirstVarInt(event.getByteBuf());
 
-            if (entityId < 0) {
+            if (entityId < 0 || payload.length == 0) {
                 return;
             }
 
@@ -159,9 +165,8 @@ public final class PacketEventsBridge {
                 PacketSendEvent event,
                 UUID playerId
         ) {
-            Object duplicate = null;
             try {
-                duplicate = ByteBufHelper.duplicate(event.getByteBuf());
+                Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
                 int count = ByteBufHelper.readVarInt(duplicate);
 
                 for (int i = 0; i < count; i++) {
