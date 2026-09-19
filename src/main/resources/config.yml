@@ -1,4 +1,4 @@
-# TWNetOptimizer v0.7
+# TWNetOptimizer v0.8
 # Conservative defaults for public/complex plugin environments.
 
 mode: optimize-safe
@@ -32,7 +32,17 @@ optimizer:
     high-ping-ms: 180
 
   cache:
+    # Stale entries are removed by the low-frequency maintenance task.
     stale-entry-ms: 300000
+
+    # Hard safety bounds. Reaching a limit disables caching for new keys
+    # until entries are removed. Packets are forwarded normally.
+    metadata-max-entries: 16384
+    ui-max-entries: 4096
+    particle-window-max-entries: 2048
+
+    # Oversized payloads are not retained for dedupe.
+    max-payload-bytes: 65536
 
 latency-guardian:
   enabled: true
@@ -58,6 +68,12 @@ trace:
   max-seconds: 60
   top-entities: 15
   top-virtual-entities: 15
+
+  # Diagnostic state is bounded as well.
+  max-entities-per-session: 2048
+  result-retention-ms: 300000
+  virtual-max-entities-per-viewer: 4096
+  virtual-stale-entry-ms: 300000
 
 logging:
   log-bursts-to-console: false

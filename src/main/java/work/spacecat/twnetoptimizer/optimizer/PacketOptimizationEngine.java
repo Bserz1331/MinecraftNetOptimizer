@@ -5,6 +5,7 @@ import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -25,11 +26,11 @@ public final class PacketOptimizationEngine {
     private final LatencyGuardian latencyGuardian;
     private final OptimizationStats stats = new OptimizationStats();
 
-    private final Map<MetadataKey, PayloadEntry> metadataCache =
+    private final ConcurrentHashMap<MetadataKey, PayloadEntry> metadataCache =
             new ConcurrentHashMap<>();
-    private final Map<UiStateKey, PayloadEntry> uiStateCache =
+    private final ConcurrentHashMap<UiStateKey, PayloadEntry> uiStateCache =
             new ConcurrentHashMap<>();
-    private final Map<UUID, ParticleWindow> particleWindows =
+    private final ConcurrentHashMap<UUID, ParticleWindow> particleWindows =
             new ConcurrentHashMap<>();
 
     private volatile boolean runtimeEnabled;
@@ -46,6 +47,10 @@ public final class PacketOptimizationEngine {
     private volatile int combatParticleMax;
     private volatile long combatRefreshDeferralMs;
     private volatile long staleEntryMs;
+    private volatile int metadataMaxEntries;
+    private volatile int uiMaxEntries;
+    private volatile int particleWindowMaxEntries;
+    private volatile int maxPayloadBytes;
 
     public PacketOptimizationEngine(
             JavaPlugin plugin,
@@ -145,6 +150,40 @@ public final class PacketOptimizationEngine {
                         300000L
                 )
         );
+
+        metadataMaxEntries = Math.max(
+                256,
+                plugin.getConfig().getInt(
+                        "optimizer.cache.metadata-max-entries",
+                        16384
+                )
+        );
+
+        uiMaxEntries = Math.max(
+                128,
+                plugin.getConfig().getInt(
+                        "optimizer.cache.ui-max-entries",
+                        4096
+                )
+        );
+
+        particleWindowMaxEntries = Math.max(
+                64,
+                plugin.getConfig().getInt(
+                        "optimizer.cache.particle-window-max-entries",
+                        2048
+                )
+        );
+
+        maxPayloadBytes = Math.max(
+                1024,
+                plugin.getConfig().getInt(
+                        "optimizer.cache.max-payload-bytes",
+                        65536
+                )
+        );
+
+        trimCachesToLimits();
     }
 
     public boolean isEnabled() {
@@ -204,19 +243,32 @@ public final class PacketOptimizationEngine {
             Object byteBuf,
             long now
     ) {
-        if (!runtimeEnabled || !metadataEnabled) {
+        if (!runtimeEnabled
+                || !metadataEnabled
+                || playerId == null
+                || byteBuf == null) {
+            return;
+        }
+
+        MetadataKey key = new MetadataKey(playerId, entityId);
+
+        if (!canStore(metadataCache, key, metadataMaxEntries)) {
             return;
         }
 
         byte[] payload = PayloadBuffer.copy(byteBuf);
 
-        if (payload == null || payload.length == 0) {
+        if (payload == null
+                || payload.length == 0
+                || payload.length > maxPayloadBytes) {
             return;
         }
 
-        metadataCache.put(
-                new MetadataKey(playerId, entityId),
-                new PayloadEntry(payload, now)
+        putBounded(
+                metadataCache,
+                key,
+                new PayloadEntry(payload, now),
+                metadataMaxEntries
         );
     }
 
@@ -268,24 +320,38 @@ public final class PacketOptimizationEngine {
             Object byteBuf,
             long now
     ) {
-        if (!runtimeEnabled || !uiEnabled || stateKey == null) {
+        if (!runtimeEnabled
+                || !uiEnabled
+                || playerId == null
+                || stateKey == null
+                || byteBuf == null) {
+            return;
+        }
+
+        UiStateKey key = new UiStateKey(playerId, stateKey);
+
+        if (!canStore(uiStateCache, key, uiMaxEntries)) {
             return;
         }
 
         byte[] payload = PayloadBuffer.copy(byteBuf);
 
-        if (payload == null || payload.length == 0) {
+        if (payload == null
+                || payload.length == 0
+                || payload.length > maxPayloadBytes) {
             return;
         }
 
-        uiStateCache.put(
-                new UiStateKey(playerId, stateKey),
-                new PayloadEntry(payload, now)
+        putBounded(
+                uiStateCache,
+                key,
+                new PayloadEntry(payload, now),
+                uiMaxEntries
         );
     }
 
     public boolean shouldSuppressParticle(UUID playerId, long now) {
-        if (!runtimeEnabled || !particleEnabled) {
+        if (!runtimeEnabled || !particleEnabled || playerId == null) {
             return false;
         }
 
@@ -307,10 +373,14 @@ public final class PacketOptimizationEngine {
 
         long second = now / 1000L;
 
-        ParticleWindow window = particleWindows.computeIfAbsent(
+        ParticleWindow window = getOrCreateParticleWindow(
                 playerId,
-                ignored -> new ParticleWindow(second)
+                second
         );
+
+        if (window == null) {
+            return false;
+        }
 
         synchronized (window) {
             if (window.second != second) {
@@ -353,6 +423,10 @@ public final class PacketOptimizationEngine {
     }
 
     public void clearPlayer(UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+
         metadataCache.keySet().removeIf(
                 key -> key.playerId.equals(playerId)
         );
@@ -370,7 +444,8 @@ public final class PacketOptimizationEngine {
     }
 
     public void cleanup() {
-        long cutoff = System.currentTimeMillis() - staleEntryMs;
+        long now = System.currentTimeMillis();
+        long cutoff = now - staleEntryMs;
 
         metadataCache.entrySet().removeIf(
                 entry -> entry.getValue().lastTouchedAt < cutoff
@@ -379,6 +454,121 @@ public final class PacketOptimizationEngine {
         uiStateCache.entrySet().removeIf(
                 entry -> entry.getValue().lastTouchedAt < cutoff
         );
+
+        long staleSecond = cutoff / 1000L;
+
+        particleWindows.entrySet().removeIf(
+                entry -> entry.getValue().second < staleSecond
+        );
+
+        trimCachesToLimits();
+    }
+
+    private ParticleWindow getOrCreateParticleWindow(
+            UUID playerId,
+            long second
+    ) {
+        ParticleWindow existing = particleWindows.get(playerId);
+
+        if (existing != null) {
+            return existing;
+        }
+
+        synchronized (particleWindows) {
+            existing = particleWindows.get(playerId);
+
+            if (existing != null) {
+                return existing;
+            }
+
+            if (particleWindows.size() >= particleWindowMaxEntries) {
+                return null;
+            }
+
+            ParticleWindow created = new ParticleWindow(second);
+            particleWindows.put(playerId, created);
+            return created;
+        }
+    }
+
+    private static <K> boolean canStore(
+            ConcurrentHashMap<K, PayloadEntry> cache,
+            K key,
+            int maxEntries
+    ) {
+        return cache.containsKey(key) || cache.size() < maxEntries;
+    }
+
+    private static <K> void putBounded(
+            ConcurrentHashMap<K, PayloadEntry> cache,
+            K key,
+            PayloadEntry entry,
+            int maxEntries
+    ) {
+        PayloadEntry existing = cache.get(key);
+
+        if (existing != null
+                && cache.replace(key, existing, entry)) {
+            return;
+        }
+
+        synchronized (cache) {
+            existing = cache.get(key);
+
+            if (existing != null) {
+                cache.put(key, entry);
+                return;
+            }
+
+            if (cache.size() >= maxEntries) {
+                return;
+            }
+
+            cache.put(key, entry);
+        }
+    }
+
+    private void trimCachesToLimits() {
+        trimPayloadCache(metadataCache, metadataMaxEntries);
+        trimPayloadCache(uiStateCache, uiMaxEntries);
+        trimParticleWindows(particleWindowMaxEntries);
+    }
+
+    private static <K> void trimPayloadCache(
+            ConcurrentHashMap<K, PayloadEntry> cache,
+            int maxEntries
+    ) {
+        int excess = cache.size() - maxEntries;
+
+        if (excess <= 0) {
+            return;
+        }
+
+        cache.entrySet().stream()
+                .sorted(Comparator.comparingLong(
+                        entry -> entry.getValue().lastTouchedAt
+                ))
+                .limit(excess)
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(cache::remove);
+    }
+
+    private void trimParticleWindows(int maxEntries) {
+        int excess = particleWindows.size() - maxEntries;
+
+        if (excess <= 0) {
+            return;
+        }
+
+        particleWindows.entrySet().stream()
+                .sorted(Comparator.comparingLong(
+                        entry -> entry.getValue().second
+                ))
+                .limit(excess)
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(particleWindows::remove);
     }
 
     private void clearCaches() {

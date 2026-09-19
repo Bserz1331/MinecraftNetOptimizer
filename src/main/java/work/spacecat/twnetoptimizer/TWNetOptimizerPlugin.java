@@ -21,6 +21,8 @@ import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.trace.EntityTraceService;
 import work.spacecat.twnetoptimizer.trace.VirtualEntityRegistry;
 
+import java.util.UUID;
+
 public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     private NetworkProfiler profiler;
     private LatencyGuardian latencyGuardian;
@@ -43,6 +45,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
         traceService = new EntityTraceService();
         virtualEntityRegistry = new VirtualEntityRegistry();
+        configureLifecycleState();
 
         registerCommands();
         getServer().getPluginManager().registerEvents(this, this);
@@ -50,7 +53,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
         cleanupTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(
                 this,
-                optimizer::cleanup,
+                this::runMaintenance,
                 1200L,
                 1200L
         );
@@ -62,6 +65,9 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         );
         getLogger().info(
                 "Critical client movement/attack packets are never cancelled or throttled by TWNetOptimizer."
+        );
+        getLogger().info(
+                "Lifecycle caches are bounded and use event-driven cleanup; explicit GC is never requested."
         );
     }
 
@@ -78,6 +84,9 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
             }
         }
 
+        packetEventsActive = false;
+        packetEventsBridge = null;
+
         if (cleanupTaskId != -1) {
             Bukkit.getScheduler().cancelTask(cleanupTaskId);
             cleanupTaskId = -1;
@@ -86,6 +95,8 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         if (profiler != null) {
             profiler.stop();
         }
+
+        clearAllRuntimeState();
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -113,24 +124,26 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
-        clearPlayerState(event.getPlayer().getUniqueId());
+        clearPlayerLifecycleState(
+                event.getPlayer().getUniqueId(),
+                true
+        );
     }
 
     @EventHandler
     public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
-        clearPlayerState(event.getPlayer().getUniqueId());
+        clearPlayerLifecycleState(
+                event.getPlayer().getUniqueId(),
+                false
+        );
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        java.util.UUID playerId = event.getPlayer().getUniqueId();
-
-        clearPlayerState(playerId);
-        profiler.remove(playerId);
-        optimizer.stats().remove(playerId);
-        traceService.remove(playerId);
-        virtualEntityRegistry.clearPlayer(playerId);
-        latencyGuardian.remove(playerId);
+        clearPlayerLifecycleState(
+                event.getPlayer().getUniqueId(),
+                true
+        );
     }
 
     public NetworkProfiler getProfiler() {
@@ -162,6 +175,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         profiler.start();
         latencyGuardian.reload();
         optimizer.reload();
+        configureLifecycleState();
     }
 
     private Player resolvePlayerAttacker(EntityDamageByEntityEvent event) {
@@ -177,10 +191,97 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         return null;
     }
 
-    private void clearPlayerState(java.util.UUID playerId) {
-        if (optimizer != null) optimizer.clearPlayer(playerId);
-        if (virtualEntityRegistry != null) virtualEntityRegistry.clearPlayer(playerId);
-        if (latencyGuardian != null) latencyGuardian.remove(playerId);
+    private void runMaintenance() {
+        if (optimizer != null) {
+            optimizer.cleanup();
+        }
+
+        if (traceService != null) {
+            traceService.cleanup();
+        }
+
+        if (virtualEntityRegistry != null) {
+            virtualEntityRegistry.cleanup();
+        }
+    }
+
+    private void configureLifecycleState() {
+        if (traceService != null) {
+            traceService.configure(
+                    getConfig().getInt(
+                            "trace.max-entities-per-session",
+                            2048
+                    ),
+                    getConfig().getLong(
+                            "trace.result-retention-ms",
+                            300000L
+                    )
+            );
+        }
+
+        if (virtualEntityRegistry != null) {
+            virtualEntityRegistry.configure(
+                    getConfig().getInt(
+                            "trace.virtual-max-entities-per-viewer",
+                            4096
+                    ),
+                    getConfig().getLong(
+                            "trace.virtual-stale-entry-ms",
+                            300000L
+                    )
+            );
+        }
+    }
+
+    private void clearPlayerLifecycleState(
+            UUID playerId,
+            boolean clearProfile
+    ) {
+        if (optimizer != null) {
+            optimizer.clearPlayer(playerId);
+
+            if (clearProfile) {
+                optimizer.stats().remove(playerId);
+            }
+        }
+
+        if (virtualEntityRegistry != null) {
+            virtualEntityRegistry.clearPlayer(playerId);
+        }
+
+        if (traceService != null) {
+            traceService.remove(playerId);
+        }
+
+        if (latencyGuardian != null) {
+            latencyGuardian.remove(playerId);
+        }
+
+        if (clearProfile && profiler != null) {
+            profiler.remove(playerId);
+        }
+    }
+
+    private void clearAllRuntimeState() {
+        if (optimizer != null) {
+            optimizer.reset();
+        }
+
+        if (virtualEntityRegistry != null) {
+            virtualEntityRegistry.clearAll();
+        }
+
+        if (traceService != null) {
+            traceService.clearAll();
+        }
+
+        if (latencyGuardian != null) {
+            latencyGuardian.reset();
+        }
+
+        if (profiler != null) {
+            profiler.reset();
+        }
     }
 
     private void registerCommands() {
