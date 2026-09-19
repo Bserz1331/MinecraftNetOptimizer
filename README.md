@@ -2,59 +2,84 @@
 
 TWNetOptimizer is a conservative Paper 1.20.4 / Java 17 packet profiler and network optimizer.
 
-## v0.7 Combat Guardian
+## v0.8 Network Lifecycle Bounds
 
-v0.7 extends the existing Latency Guardian so combat protection covers both sides of PVE and PVP without dropping or reordering critical gameplay packets.
+v0.8 adds bounded lifecycle state so TWNetOptimizer cannot grow its own packet-related caches indefinitely.
 
-### Attacker + victim combat detection
+This is not a RAM cleaner and does not replace the JVM garbage collector.
 
-Combat mode can now be activated by:
+TWNetOptimizer never calls `System.gc()`.
+
+### Bounded optimizer caches
+
+The following runtime structures now have hard limits:
+
+- ENTITY_METADATA state cache
+- logical UI state cache
+- particle rate windows
+- virtual entity tracking per viewer
+- entity trace counters per session
+
+When an optimization cache reaches its limit, TWNetOptimizer fails open:
+
+    new cache key arrives
+    + cache is full
+    -> do not retain the new state
+    -> forward packets normally
+
+Gameplay correctness is preferred over cache hit rate.
+
+Oversized packet payloads are also not retained for dedupe.
+
+### Lifecycle cleanup
+
+State is released on:
+
+- player quit
+- player join, to clear stale state from an abnormal previous session
+- world change for world-scoped packet/entity state
+- entity destroy where available
+- plugin disable
+- low-frequency stale-state maintenance
+
+Trace results are retained briefly after a trace ends so `/netdebug entities` can still inspect them, then maintenance removes them.
+
+Virtual entity entries also receive stale cleanup in case a third-party packet path never produces a matching destroy packet.
+
+### Allocation and GC policy
+
+v0.8 only reduces avoidable retention.
+
+It does not:
+
+- call `System.gc()`
+- alter JVM GC policy
+- change Netty channel watermarks
+- retain or release PacketEvents buffers outside TWNetOptimizer ownership
+- inspect or mutate other plugins' internal collections
+
+The goal is:
+
+    packet-related state created
+    -> used
+    -> bounded
+    -> released
+    -> normal JVM GC
+
+### Combat Guardian retained
+
+v0.7 Combat Guardian remains unchanged in behavior.
+
+Combat mode can be activated by:
 
 - client ATTACK input
 - confirmed Bukkit entity damage dealt by a player
 - confirmed Bukkit entity damage received by a player
 - projectile damage where the shooter is a player
 
-The Bukkit damage observer runs at MONITOR with `ignoreCancelled = true` and never modifies the damage event.
+Critical packet safety remains unchanged.
 
-Examples:
-
-    Player A attacks Player B
-    -> A COMBAT
-    -> B COMBAT
-
-    Zombie attacks Player
-    -> Player COMBAT
-
-    Player shoots an arrow
-    -> shooter COMBAT when damage is confirmed
-    -> player victim COMBAT when applicable
-
-### Conservative combat queue relief
-
-Particle throttling remains OFF by default for compatibility with Slimefun, RPG and boss visual telegraphs.
-
-To make COMBAT mode useful even with particle throttling disabled, v0.7 can briefly defer only periodic refreshes that are exact duplicates of already-forwarded Metadata or UI state.
-
-Default behavior:
-
-    normal unchanged refresh due at 30s
-    + active COMBAT
-    -> may defer that duplicate refresh for up to 5s
-
-A real state transition is never delayed.
-
-Examples that always pass immediately:
-
-    health/state A -> B
-    scoreboard 100 -> 101
-    metadata payload changed
-
-Only an exact duplicate of the client's already-known state is eligible for combat refresh deferral.
-
-### Critical packet safety boundary
-
-TWNetOptimizer still does not throttle, drop, coalesce or reorder:
+TWNetOptimizer does not throttle, drop, coalesce or reorder:
 
 - movement
 - attack input
@@ -67,7 +92,7 @@ TWNetOptimizer still does not throttle, drop, coalesce or reorder:
 
 TCP ordering is not modified.
 
-### v0.6 foundations retained
+### Existing optimizer foundations retained
 
 - low-allocation ENTITY_METADATA exact-state dedupe
 - logical-target UI changed-only cache
@@ -88,8 +113,12 @@ For new installations:
 - Latency Guardian: ON
 - combat window: 2500 ms
 - duplicate refresh combat deferral: max 5000 ms
+- metadata cache: max 16384 entries
+- UI cache: max 4096 entries
+- cached payload: max 65536 bytes
+- virtual entity tracking: max 4096 entries per viewer
 
-Existing server config files are not forcibly overwritten. Missing v0.7 keys use safe code defaults.
+Existing server config files are not forcibly overwritten. Missing v0.8 keys use safe code defaults.
 
 Useful commands:
 
@@ -101,4 +130,4 @@ Useful commands:
     /netdebug server
     /netdebug advice
 
-TWNetOptimizer cannot reduce physical network RTT. Combat Guardian is designed to reduce avoidable server/output-queue interference around combat while preserving gameplay correctness.
+TWNetOptimizer cannot reduce physical network RTT. Its purpose is to reduce avoidable packet work and state retention while preserving gameplay correctness first.
