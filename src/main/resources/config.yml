@@ -1,4 +1,4 @@
-# TWNetOptimizer v0.6
+# TWNetOptimizer v0.7
 # Conservative defaults for public/complex plugin environments.
 
 mode: optimize-safe
@@ -37,6 +37,11 @@ optimizer:
 latency-guardian:
   enabled: true
   combat-window-ms: 2500
+
+  # During COMBAT, unchanged Metadata/UI periodic refreshes may be deferred
+  # briefly. Real state changes are never delayed.
+  combat-refresh-deferral-ms: 5000
+
   handoff-probe-interval-ms: 100
   handoff-sample-limit: 128
   handoff-pressure-ms: 60

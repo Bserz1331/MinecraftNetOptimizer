@@ -2,52 +2,81 @@
 
 TWNetOptimizer is a conservative Paper 1.20.4 / Java 17 packet profiler and network optimizer.
 
-## v0.6 Conservative State Cache
+## v0.7 Combat Guardian
 
-v0.6 focuses on improving safety and optimizer overhead rather than dropping more packet categories.
+v0.7 extends the existing Latency Guardian so combat protection covers both sides of PVE and PVP without dropping or reordering critical gameplay packets.
 
-### Low-allocation metadata dedupe
+### Attacker + victim combat detection
 
-ENTITY_METADATA comparison now reads the PacketEvents buffer directly against the last forwarded payload.
+Combat mode can now be activated by:
 
-Repeated duplicate metadata no longer needs a fresh byte array allocation on every packet.
+- client ATTACK input
+- confirmed Bukkit entity damage dealt by a player
+- confirmed Bukkit entity damage received by a player
+- projectile damage where the shooter is a player
 
-A payload copy is only stored when a packet is actually allowed through and reaches the MONITOR stage.
+The Bukkit damage observer runs at MONITOR with `ignoreCancelled = true` and never modifies the damage event.
 
-This is especially useful on servers producing thousands of identical metadata packets per second.
+Examples:
 
-### Final-forwarded cache semantics
+    Player A attacks Player B
+    -> A COMBAT
+    -> B COMBAT
 
-Metadata and UI state are committed to cache only from the final MONITOR listener after the packet remains uncancelled.
+    Zombie attacks Player
+    -> Player COMBAT
 
-This makes the cache represent what was actually forwarded rather than what TWNetOptimizer merely intended to forward.
+    Player shoots an arrow
+    -> shooter COMBAT when damage is confirmed
+    -> player victim COMBAT when applicable
 
-### UI changed-only state
+### Conservative combat queue relief
 
-Persistent UI dedupe is now keyed by logical target instead of by a recently seen payload set.
+Particle throttling remains OFF by default for compatibility with Slimefun, RPG and boss visual telegraphs.
 
-Tracked targets include:
+To make COMBAT mode useful even with particle throttling disabled, v0.7 can briefly defer only periodic refreshes that are exact duplicates of already-forwarded Metadata or UI state.
 
-- BossBar UUID
-- Scoreboard objective name
-- score entry + objective
-- display scoreboard slot
-- team name
-- player-list header/footer
+Default behavior:
 
-For each target, only an exact repeat of the current client state is suppressed.
+    normal unchanged refresh due at 30s
+    + active COMBAT
+    -> may defer that duplicate refresh for up to 5s
 
-A state transition such as 100 -> 101 -> 100 is forwarded correctly.
+A real state transition is never delayed.
 
-Unchanged state is still periodically refreshed.
+Examples that always pass immediately:
 
-### Netty backpressure observation
+    health/state A -> B
+    scoreboard 100 -> 101
+    metadata payload changed
 
-Latency Guardian now samples the existing Netty channel writability state.
+Only an exact duplicate of the client's already-known state is eligible for combat refresh deferral.
 
-TWNetOptimizer does not alter Netty watermarks or TCP behavior.
+### Critical packet safety boundary
 
-If the channel reports unwritable, the player enters PRESSURE mode and /netdebug latency shows the observed channel state.
+TWNetOptimizer still does not throttle, drop, coalesce or reorder:
+
+- movement
+- attack input
+- entity velocity / knockback
+- teleport
+- inventory transaction / acknowledgement
+- chunk and world consistency
+- block state
+- KeepAlive
+
+TCP ordering is not modified.
+
+### v0.6 foundations retained
+
+- low-allocation ENTITY_METADATA exact-state dedupe
+- logical-target UI changed-only cache
+- cache commit only after final MONITOR forwarding
+- Raw vs Forwarded packet accounting
+- Netty channel writability / backpressure observation
+- main-thread handoff latency sampling
+- virtual entity registry and entity traffic tracing
+- server diagnostics and advice engine
 
 ### Conservative defaults
 
@@ -57,25 +86,10 @@ For new installations:
 - UI changed-only dedupe: ON
 - particle throttle: OFF
 - Latency Guardian: ON
-- movement/attack filtering: NEVER
-- teleport/velocity filtering: NEVER
-- chunk/world consistency filtering: NEVER
-- inventory/ack filtering: NEVER
-- KeepAlive filtering: NEVER
+- combat window: 2500 ms
+- duplicate refresh combat deferral: max 5000 ms
 
-Existing server config files are not forcibly overwritten.
-
-### Intentionally not enabled yet
-
-v0.6 does not enable:
-
-- field-level metadata rewriting
-- same-tick last-value-wins coalescing
-- teleport coalescing
-- velocity coalescing
-- custom packet reordering
-
-Those mechanisms are more invasive and should only be considered after broader compatibility testing.
+Existing server config files are not forcibly overwritten. Missing v0.7 keys use safe code defaults.
 
 Useful commands:
 
@@ -87,4 +101,4 @@ Useful commands:
     /netdebug server
     /netdebug advice
 
-TWNetOptimizer cannot reduce physical network RTT. Its purpose is to reduce redundant traffic, expose packet pressure, and protect gameplay correctness first.
+TWNetOptimizer cannot reduce physical network RTT. Combat Guardian is designed to reduce avoidable server/output-queue interference around combat while preserving gameplay correctness.
