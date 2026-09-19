@@ -136,7 +136,7 @@ Useful commands:
 
 ### Lifecycle verification
 
-`/netdebug lifecycle` exposes current entries, configured limits, high-water marks, fail-open skips, stale removals and trace / virtual-entity retention.
+`/netdebug lifecycle` exposes current entries, configured limits, high-water marks, fail-open skips, stale removals, trace / virtual-entity retention, JVM heap used / committed / max and observed GC collection count / time. It never requests a GC.
 
 `/netdebug lifecycle <player>` shows the same state for one online player.
 
