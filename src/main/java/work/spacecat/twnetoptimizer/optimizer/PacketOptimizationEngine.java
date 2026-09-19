@@ -1,6 +1,7 @@
 package work.spacecat.twnetoptimizer.optimizer;
 
 import org.bukkit.plugin.java.JavaPlugin;
+import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 
@@ -22,6 +23,7 @@ public final class PacketOptimizationEngine {
 
     private final JavaPlugin plugin;
     private final NetworkProfiler profiler;
+    private final LatencyGuardian latencyGuardian;
     private final OptimizationStats stats = new OptimizationStats();
 
     private final Map<MetadataKey, CacheEntry> metadataCache = new ConcurrentHashMap<>();
@@ -38,11 +40,18 @@ public final class PacketOptimizationEngine {
     private volatile boolean particleAdaptive;
     private volatile int particleAdaptiveMax;
     private volatile int particleHighPingMs;
+    private volatile int pressureParticleMax;
+    private volatile int combatParticleMax;
     private volatile long staleEntryMs;
 
-    public PacketOptimizationEngine(JavaPlugin plugin, NetworkProfiler profiler) {
+    public PacketOptimizationEngine(
+            JavaPlugin plugin,
+            NetworkProfiler profiler,
+            LatencyGuardian latencyGuardian
+    ) {
         this.plugin = plugin;
         this.profiler = profiler;
+        this.latencyGuardian = latencyGuardian;
         reload();
     }
 
@@ -74,6 +83,22 @@ public final class PacketOptimizationEngine {
                 1,
                 plugin.getConfig().getInt("optimizer.particle-throttle.high-ping-ms", 180)
         );
+
+        pressureParticleMax = Math.max(
+                1,
+                plugin.getConfig().getInt(
+                        "latency-guardian.cosmetic.pressure-particle-max-per-second",
+                        150
+                )
+        );
+        combatParticleMax = Math.max(
+                1,
+                plugin.getConfig().getInt(
+                        "latency-guardian.cosmetic.combat-particle-max-per-second",
+                        100
+                )
+        );
+
         staleEntryMs = Math.max(
                 60000L,
                 plugin.getConfig().getLong("optimizer.cache.stale-entry-ms", 300000L)
@@ -91,12 +116,7 @@ public final class PacketOptimizationEngine {
         }
     }
 
-    public boolean shouldSuppressMetadata(
-            UUID playerId,
-            int entityId,
-            byte[] payload,
-            long now
-    ) {
+    public boolean shouldSuppressMetadata(UUID playerId, int entityId, byte[] payload, long now) {
         if (!runtimeEnabled || !metadataEnabled || payload.length == 0) {
             return false;
         }
@@ -116,12 +136,7 @@ public final class PacketOptimizationEngine {
         return false;
     }
 
-    public boolean shouldSuppressUi(
-            UUID playerId,
-            String packetName,
-            byte[] payload,
-            long now
-    ) {
+    public boolean shouldSuppressUi(UUID playerId, String packetName, byte[] payload, long now) {
         if (!runtimeEnabled
                 || !uiEnabled
                 || payload.length == 0
@@ -145,12 +160,18 @@ public final class PacketOptimizationEngine {
             return false;
         }
 
+        ProfileSnapshot snapshot = profiler.snapshot(playerId);
+        LatencyGuardian.Mode mode = latencyGuardian.mode(playerId, snapshot);
+
         int allowed = particleMax;
-        if (particleAdaptive) {
-            ProfileSnapshot snapshot = profiler.snapshot(playerId);
-            if (snapshot.burst() || snapshot.pingMs() >= particleHighPingMs) {
-                allowed = Math.min(allowed, particleAdaptiveMax);
-            }
+
+        if (mode == LatencyGuardian.Mode.COMBAT) {
+            allowed = Math.min(allowed, combatParticleMax);
+        } else if (mode == LatencyGuardian.Mode.PRESSURE) {
+            allowed = Math.min(allowed, pressureParticleMax);
+        } else if (particleAdaptive
+                && (snapshot.burst() || snapshot.pingMs() >= particleHighPingMs)) {
+            allowed = Math.min(allowed, particleAdaptiveMax);
         }
 
         long second = now / 1000L;
@@ -166,6 +187,7 @@ public final class PacketOptimizationEngine {
             }
 
             window.count++;
+
             if (window.count > allowed) {
                 stats.particleSuppressed(playerId);
                 return true;
@@ -260,12 +282,9 @@ public final class PacketOptimizationEngine {
 
         @Override
         public boolean equals(Object object) {
-            if (this == object) {
-                return true;
-            }
-            if (!(object instanceof PayloadKey other)) {
-                return false;
-            }
+            if (this == object) return true;
+            if (!(object instanceof PayloadKey other)) return false;
+
             return playerId.equals(other.playerId)
                     && packetName.equals(other.packetName)
                     && Arrays.equals(payload, other.payload);

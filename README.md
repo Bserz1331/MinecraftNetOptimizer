@@ -1,150 +1,40 @@
 # TWNetOptimizer
 
-TWNetOptimizer is a **Paper 1.20.4 / Java 17** network and server profiler with a conservative safe-optimization layer for long-distance Minecraft servers.
+TWNetOptimizer is a Paper 1.20.4 / Java 17 network and server profiler with conservative safe optimization for long-distance Minecraft servers.
 
-## v0.4
+## v0.5 Latency Guardian
 
-v0.4 adds two important diagnostic improvements:
+Latency Guardian protects gameplay responsiveness without inventing an unsafe custom packet queue.
 
-1. **Raw vs forwarded traffic**
-   - raw outbound packets are counted before TWNetOptimizer filtering
-   - forwarded outbound packets are counted from a PacketEvents MONITOR listener only when the final event is not cancelled
-   - `/netdebug <player>` now shows raw, forwarded, not-forwarded and reduction percentage
+Critical client input includes player movement packets and INTERACT_ENTITY attacks.
 
-2. **Virtual entity registry**
-   - tracks forwarded `SPAWN_ENTITY`, `SPAWN_PLAYER` and `SPAWN_EXPERIENCE_ORB`
-   - records entity ID, spawn UUID, spawn packet and protocol entity type
-   - continuously counts ENTITY_METADATA / ENTITY_TELEPORT / ENTITY_VELOCITY activity
-   - compares tracked client entity IDs with loaded Bukkit entity IDs
-   - `/netdebug virtual <player>` shows virtual spawn types and top hot virtual entities
+TWNetOptimizer never cancels or throttles those receive packets.
 
-## Safe optimization
+A real attack activates COMBAT mode for a configurable window.
 
-Enabled by default:
+During COMBAT mode movement, attack, teleport, velocity, inventory, chunk/world consistency, block state and KeepAlive remain untouched.
 
-- **ENTITY_METADATA dedupe**
-  - keyed per player + entity ID
-  - identical metadata payload is suppressed until the state changes
-  - periodic refresh pass-through prevents indefinite cache staleness
-- **Persistent UI exact-duplicate dedupe**
-  - BOSS_BAR
-  - SCOREBOARD_OBJECTIVE
-  - UPDATE_SCORE
-  - DISPLAY_SCOREBOARD
-  - TEAMS
-  - PLAYER_LIST_HEADER_AND_FOOTER
-- **Particle throttle**
-  - cosmetic only
-  - adaptive lower cap when a player is already in burst/high-ping conditions
+Only low-value cosmetic particle allowance becomes stricter.
 
-## Safety boundary
+Default particle limits are 500 per second in normal mode, 150 under pressure and 100 in combat.
 
-TWNetOptimizer does **not** optimize or suppress:
-
-- player movement
-- entity teleport
-- entity velocity
-- combat packets
-- inventory / transaction / acknowledgement packets
-- chunk/world consistency packets
-- block state packets
-- KeepAlive
-
-Those categories are monitored and traced, not filtered.
-
-## Commands
-
-```
-/netdebug
-/netdebug <player>
-/netdebug top
-/netdebug status
-/netdebug server
-/netdebug advice
-/netdebug trace <player> [seconds]
-/netdebug entities <player>
-/netdebug virtual <player>
-/netdebug optimize <status|on|off|reset>
-/netdebug reset
-/netdebug reload
-```
-
-Permission: `twnetoptimizer.admin` (default: op)
-
-## Reading raw vs forwarded
-
-Example:
-
-```
-Raw outbound:       30000 pkt/s
-Forwarded outbound: 20000 pkt/s
-Not forwarded:      10000 pkt/s (33.3%)
-```
-
-`Not forwarded` is the difference between the observed raw and final forwarded counts. It can include cancellations by other packet listeners as well as TWNetOptimizer.
-
-The separate `TWNO suppressed since reset` counter reports only suppressions performed by TWNetOptimizer's own metadata/UI/particle modules.
-
-## Virtual entity diagnosis
-
-After a full restart, TWNetOptimizer observes entity spawn packets sent to each client.
+Pressure mode activates when final forwarded traffic is already bursting or sampled main-thread handoff p95 crosses the configured threshold.
 
 Use:
 
-```
-/netdebug trace <player> 10
-/netdebug entities <player>
-/netdebug virtual <player>
-```
+    /netdebug latency <player>
 
-When a hot entity ID is not a loaded Bukkit entity but its spawn packet was observed, the trace can now report a protocol type such as:
+It reports ping, priority mode, current movement/attack input counts, sampled Netty-arrival to Bukkit-main-thread handoff, raw/forwarded outbound traffic and packet reduction.
 
-```
-VIRTUAL minecraft:item_display [SPAWN_ENTITY]
-```
+Handoff latency is not exact attack resolution time. It is a scheduler diagnostic for separating network RTT from server-side main-thread availability.
 
-instead of only `UNKNOWN / VIRTUAL`.
+Other useful commands:
 
-## Server diagnostics
+    /netdebug <player>
+    /netdebug virtual <player>
+    /netdebug trace <player> 10
+    /netdebug entities <player>
+    /netdebug server
+    /netdebug advice
 
-```
-/netdebug server
-/netdebug advice
-```
-
-Server diagnostics include:
-
-- TPS / MSPT
-- view distance / simulation distance
-- loaded chunk count
-- loaded entity count and top entity types
-- average player ping
-- pending Bukkit scheduler task counts by plugin
-
-Pending scheduler task count is a diagnostic signal only. It does not prove task frequency or CPU cost.
-
-## Requirements
-
-- Paper 1.20.4
-- Java 17
-- PacketEvents 2.x for packet profiling / optimization
-
-Without PacketEvents, Paper-side server diagnostics remain available but packet-level profiling and optimization are disabled.
-
-## Build
-
-```
-mvn verify
-```
-
-GitHub Actions builds every push / pull request and uploads `TWNetOptimizer-*.jar` as an artifact.
-
-## Important byte-count caveat
-
-Observed bytes are PacketEvents-layer buffer bytes and are not NIC wire bytes after compression, encryption, TCP framing or retransmission.
-
-## Upstream optimization
-
-Packet suppression can save later network-path work, but it cannot undo CPU work another plugin already performed before creating a packet.
-
-If the virtual-entity registry shows a plugin-generated entity repeatedly receiving unchanged state, fixing that producer with dirty flags, changed-only synchronization, lower update cadence or event-driven updates remains the preferred long-term optimization.
+TWNetOptimizer cannot reduce the physical Taiwan to US West RTT. Latency Guardian reduces avoidable local pressure around critical gameplay traffic and exposes server-side handoff delay.
