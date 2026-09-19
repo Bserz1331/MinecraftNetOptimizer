@@ -12,6 +12,7 @@ import org.bukkit.entity.Player;
 import work.spacecat.twnetoptimizer.TWNetOptimizerPlugin;
 import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.optimizer.OptimizationStats;
+import work.spacecat.twnetoptimizer.optimizer.PacketOptimizationEngine;
 import work.spacecat.twnetoptimizer.profiler.ProfileSnapshot;
 import work.spacecat.twnetoptimizer.server.AdviceEngine;
 import work.spacecat.twnetoptimizer.server.ServerDiagnostics;
@@ -64,6 +65,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
             case "entities" -> showEntities(sender, args);
             case "virtual" -> showVirtual(sender, args);
             case "latency" -> showLatency(sender, args);
+            case "lifecycle" -> showLifecycle(sender, args);
             case "optimize" -> optimize(sender, args);
             case "reset" -> {
                 plugin.getProfiler().reset();
@@ -938,6 +940,248 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                 );
     }
 
+    private void showLifecycle(
+            CommandSender sender,
+            String[] args
+    ) {
+        PacketOptimizationEngine.LifecycleSnapshot optimizer =
+                plugin.getOptimizer().lifecycleSnapshot();
+
+        EntityTraceService.MetricsSnapshot trace =
+                plugin.getTraceService().metricsSnapshot();
+
+        VirtualEntityRegistry.MetricsSnapshot virtual =
+                plugin.getVirtualEntityRegistry().metricsSnapshot();
+
+        sender.sendMessage(
+                ChatColor.DARK_AQUA
+                        + "----- Lifecycle state -----"
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Metadata cache: "
+                        + ChatColor.WHITE
+                        + optimizer.metadataEntries()
+                        + " / "
+                        + optimizer.metadataGlobalMax()
+                        + ChatColor.GRAY
+                        + " global, per-player max "
+                        + ChatColor.WHITE
+                        + optimizer.metadataPerPlayerMax()
+                        + ChatColor.GRAY
+                        + ", high-water "
+                        + ChatColor.WHITE
+                        + optimizer.metadataHighWater()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Metadata fail-open skips: "
+                        + ChatColor.WHITE
+                        + optimizer.metadataSkippedGlobal()
+                        + " global / "
+                        + optimizer.metadataSkippedPlayer()
+                        + " per-player"
+                        + ChatColor.GRAY
+                        + ", removed stale / trim "
+                        + ChatColor.WHITE
+                        + optimizer.metadataStaleRemoved()
+                        + " / "
+                        + optimizer.metadataTrimRemoved()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "UI cache: "
+                        + ChatColor.WHITE
+                        + optimizer.uiEntries()
+                        + " / "
+                        + optimizer.uiGlobalMax()
+                        + ChatColor.GRAY
+                        + " global, per-player max "
+                        + ChatColor.WHITE
+                        + optimizer.uiPerPlayerMax()
+                        + ChatColor.GRAY
+                        + ", high-water "
+                        + ChatColor.WHITE
+                        + optimizer.uiHighWater()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "UI fail-open skips: "
+                        + ChatColor.WHITE
+                        + optimizer.uiSkippedGlobal()
+                        + " global / "
+                        + optimizer.uiSkippedPlayer()
+                        + " per-player"
+                        + ChatColor.GRAY
+                        + ", removed stale / trim "
+                        + ChatColor.WHITE
+                        + optimizer.uiStaleRemoved()
+                        + " / "
+                        + optimizer.uiTrimRemoved()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Particle windows: "
+                        + ChatColor.WHITE
+                        + optimizer.particleWindows()
+                        + " / "
+                        + optimizer.particleWindowMax()
+                        + ChatColor.GRAY
+                        + ", high-water "
+                        + ChatColor.WHITE
+                        + optimizer.particleHighWater()
+                        + ChatColor.GRAY
+                        + ", skipped / stale removed "
+                        + ChatColor.WHITE
+                        + optimizer.particleWindowSkipped()
+                        + " / "
+                        + optimizer.particleStaleRemoved()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Uncacheable payloads: "
+                        + ChatColor.WHITE
+                        + optimizer.uncacheablePayloads()
+                        + ChatColor.GRAY
+                        + ", old-state invalidations "
+                        + ChatColor.WHITE
+                        + optimizer.uncacheableInvalidations()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Trace sessions / active / entities: "
+                        + ChatColor.WHITE
+                        + trace.sessions()
+                        + " / "
+                        + trace.activeSessions()
+                        + " / "
+                        + trace.entities()
+                        + ChatColor.GRAY
+                        + ", high-water "
+                        + ChatColor.WHITE
+                        + trace.highWaterEntities()
+                        + ChatColor.GRAY
+                        + ", skipped "
+                        + ChatColor.WHITE
+                        + trace.skippedEntities()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Virtual viewers / entities: "
+                        + ChatColor.WHITE
+                        + virtual.viewers()
+                        + " / "
+                        + virtual.entities()
+                        + ChatColor.GRAY
+                        + ", high-water "
+                        + ChatColor.WHITE
+                        + virtual.highWaterEntities()
+                        + ChatColor.GRAY
+                        + ", skipped "
+                        + ChatColor.WHITE
+                        + virtual.skippedEntities()
+                        + ChatColor.GRAY
+                        + ", stale / trim removed "
+                        + ChatColor.WHITE
+                        + virtual.staleRemovedEntities()
+                        + " / "
+                        + virtual.trimRemovedEntities()
+        );
+
+        if (args.length < 2) {
+            sender.sendMessage(
+                    ChatColor.DARK_GRAY
+                            + "Use /netdebug lifecycle <player> for per-player state."
+            );
+            return;
+        }
+
+        Player target = Bukkit.getPlayerExact(args[1]);
+
+        if (target == null) {
+            sender.sendMessage(
+                    prefix() + ChatColor.RED
+                            + "Player not found: "
+                            + args[1]
+            );
+            return;
+        }
+
+        UUID playerId = target.getUniqueId();
+
+        PacketOptimizationEngine.PlayerLifecycleSnapshot playerOptimizer =
+                plugin.getOptimizer().lifecycleSnapshot(playerId);
+
+        EntityTraceService.PlayerMetricsSnapshot playerTrace =
+                plugin.getTraceService().metricsSnapshot(playerId);
+
+        VirtualEntityRegistry.PlayerMetricsSnapshot playerVirtual =
+                plugin.getVirtualEntityRegistry().metricsSnapshot(playerId);
+
+        sender.sendMessage(
+                ChatColor.DARK_AQUA
+                        + "----- Lifecycle: "
+                        + target.getName()
+                        + " -----"
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Metadata / UI cache: "
+                        + ChatColor.WHITE
+                        + playerOptimizer.metadataEntries()
+                        + " / "
+                        + playerOptimizer.metadataMax()
+                        + ChatColor.GRAY
+                        + " | "
+                        + ChatColor.WHITE
+                        + playerOptimizer.uiEntries()
+                        + " / "
+                        + playerOptimizer.uiMax()
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Particle window: "
+                        + (playerOptimizer.particleWindowPresent()
+                        ? ChatColor.GREEN + "present"
+                        : ChatColor.DARK_GRAY + "none")
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Trace entities: "
+                        + ChatColor.WHITE
+                        + playerTrace.entities()
+                        + " / "
+                        + playerTrace.maxEntities()
+                        + ChatColor.GRAY
+                        + " ("
+                        + (playerTrace.active()
+                        ? ChatColor.GREEN + "active"
+                        : ChatColor.DARK_GRAY + "inactive")
+                        + ChatColor.GRAY
+                        + ")"
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "Virtual entities: "
+                        + ChatColor.WHITE
+                        + playerVirtual.entities()
+                        + " / "
+                        + playerVirtual.maxEntities()
+        );
+    }
+
     private void showServer(CommandSender sender) {
         ServerDiagnostics.Snapshot snapshot =
                 ServerDiagnostics.capture();
@@ -1090,6 +1334,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                             "entities",
                             "virtual",
                             "latency",
+                            "lifecycle",
                             "optimize",
                             "reset",
                             "reload"
@@ -1115,7 +1360,8 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                 && (args[0].equalsIgnoreCase("trace")
                 || args[0].equalsIgnoreCase("entities")
                 || args[0].equalsIgnoreCase("virtual")
-                || args[0].equalsIgnoreCase("latency"))) {
+                || args[0].equalsIgnoreCase("latency")
+                || args[0].equalsIgnoreCase("lifecycle"))) {
             String input =
                     args[1].toLowerCase(Locale.ROOT);
 
