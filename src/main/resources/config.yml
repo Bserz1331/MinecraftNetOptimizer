@@ -1,8 +1,3 @@
-# TWNetOptimizer v0.4
-# Safe optimizer: only redundant persistent-state packets and cosmetic particle excess
-# are suppressible. Movement, teleport, velocity, combat, inventory, chunk/world
-# consistency, KeepAlive and transaction/ack packets are never optimized here.
-
 mode: optimize-safe
 
 sampling:
@@ -14,24 +9,30 @@ burst:
 
 optimizer:
   enabled: true
-
   metadata-dedupe:
     enabled: true
     refresh-ms: 30000
-
   ui-dedupe:
     enabled: true
     duplicate-window-ms: 2000
-
   particle-throttle:
     enabled: true
     max-per-second: 500
     adaptive: true
     adaptive-max-per-second: 250
     high-ping-ms: 180
-
   cache:
     stale-entry-ms: 300000
+
+latency-guardian:
+  enabled: true
+  combat-window-ms: 2500
+  handoff-probe-interval-ms: 100
+  handoff-sample-limit: 128
+  handoff-pressure-ms: 60
+  cosmetic:
+    pressure-particle-max-per-second: 150
+    combat-particle-max-per-second: 100
 
 trace:
   default-seconds: 10

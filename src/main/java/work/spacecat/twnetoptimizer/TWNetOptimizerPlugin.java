@@ -10,6 +10,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import work.spacecat.twnetoptimizer.command.NetDebugCommand;
+import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.optimizer.PacketOptimizationEngine;
 import work.spacecat.twnetoptimizer.packetevents.PacketEventsBridge;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
@@ -18,6 +19,7 @@ import work.spacecat.twnetoptimizer.trace.VirtualEntityRegistry;
 
 public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     private NetworkProfiler profiler;
+    private LatencyGuardian latencyGuardian;
     private PacketOptimizationEngine optimizer;
     private EntityTraceService traceService;
     private VirtualEntityRegistry virtualEntityRegistry;
@@ -32,7 +34,9 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         profiler = new NetworkProfiler(this);
         profiler.start();
 
-        optimizer = new PacketOptimizationEngine(this, profiler);
+        latencyGuardian = new LatencyGuardian(this);
+        optimizer = new PacketOptimizationEngine(this, profiler, latencyGuardian);
+
         traceService = new EntityTraceService();
         virtualEntityRegistry = new VirtualEntityRegistry();
 
@@ -49,10 +53,11 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
 
         getLogger().info("TWNetOptimizer enabled in OPTIMIZE-SAFE mode.");
         getLogger().info(
-                "Raw and forwarded outbound traffic are measured separately."
+                "Latency Guardian is "
+                        + (latencyGuardian.isEnabled() ? "enabled." : "disabled.")
         );
         getLogger().info(
-                "Critical movement, teleport, velocity, combat, inventory, chunk/world consistency and KeepAlive packets are not filtered."
+                "Critical client movement/attack packets are never cancelled or throttled by TWNetOptimizer."
         );
     }
 
@@ -98,6 +103,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         optimizer.stats().remove(playerId);
         traceService.remove(playerId);
         virtualEntityRegistry.clearPlayer(playerId);
+        latencyGuardian.remove(playerId);
     }
 
     public NetworkProfiler getProfiler() {
@@ -116,6 +122,10 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
         return virtualEntityRegistry;
     }
 
+    public LatencyGuardian getLatencyGuardian() {
+        return latencyGuardian;
+    }
+
     public boolean isPacketEventsActive() {
         return packetEventsActive;
     }
@@ -123,25 +133,21 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     public void reloadRuntimeConfig() {
         reloadConfig();
         profiler.start();
+        latencyGuardian.reload();
         optimizer.reload();
     }
 
     private void clearPlayerState(java.util.UUID playerId) {
-        if (optimizer != null) {
-            optimizer.clearPlayer(playerId);
-        }
-
-        if (virtualEntityRegistry != null) {
-            virtualEntityRegistry.clearPlayer(playerId);
-        }
+        if (optimizer != null) optimizer.clearPlayer(playerId);
+        if (virtualEntityRegistry != null) virtualEntityRegistry.clearPlayer(playerId);
+        if (latencyGuardian != null) latencyGuardian.remove(playerId);
     }
 
     private void registerCommands() {
         PluginCommand command = getCommand("netdebug");
+
         if (command == null) {
-            throw new IllegalStateException(
-                    "netdebug command is missing from plugin.yml"
-            );
+            throw new IllegalStateException("netdebug command is missing from plugin.yml");
         }
 
         NetDebugCommand executor = new NetDebugCommand(this);
@@ -150,8 +156,7 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
     }
 
     private void enablePacketEventsBridgeIfAvailable() {
-        Plugin packetEvents =
-                Bukkit.getPluginManager().getPlugin("packetevents");
+        Plugin packetEvents = Bukkit.getPluginManager().getPlugin("packetevents");
 
         if (packetEvents == null || !packetEvents.isEnabled()) {
             packetEventsActive = false;
@@ -166,21 +171,21 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
                     profiler,
                     optimizer,
                     traceService,
-                    virtualEntityRegistry
+                    virtualEntityRegistry,
+                    latencyGuardian
             );
             packetEventsBridge.register();
             packetEventsActive = true;
+
             getLogger().info(
-                    "PacketEvents detected. Packet profiler and safe optimizer are active."
+                    "PacketEvents detected. Packet profiler, safe optimizer and Latency Guardian are active."
             );
         } catch (LinkageError | RuntimeException ex) {
             packetEventsActive = false;
             packetEventsBridge = null;
+
             getLogger().severe(
                     "PacketEvents integration failed: " + ex.getMessage()
-            );
-            getLogger().severe(
-                    "TWNetOptimizer will continue with Paper-side diagnostics only."
             );
         }
     }

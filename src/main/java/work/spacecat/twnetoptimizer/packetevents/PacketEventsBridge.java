@@ -10,6 +10,7 @@ import com.github.retrooper.packetevents.netty.buffer.ByteBufHelper;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityType;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import org.bukkit.entity.Player;
+import work.spacecat.twnetoptimizer.latency.LatencyGuardian;
 import work.spacecat.twnetoptimizer.optimizer.PacketOptimizationEngine;
 import work.spacecat.twnetoptimizer.profiler.NetworkProfiler;
 import work.spacecat.twnetoptimizer.trace.EntityTraceService;
@@ -22,6 +23,7 @@ public final class PacketEventsBridge {
     private final PacketOptimizationEngine optimizer;
     private final EntityTraceService traceService;
     private final VirtualEntityRegistry virtualEntityRegistry;
+    private final LatencyGuardian latencyGuardian;
 
     private PacketListenerCommon optimizingListener;
     private PacketListenerCommon monitorListener;
@@ -30,18 +32,18 @@ public final class PacketEventsBridge {
             NetworkProfiler profiler,
             PacketOptimizationEngine optimizer,
             EntityTraceService traceService,
-            VirtualEntityRegistry virtualEntityRegistry
+            VirtualEntityRegistry virtualEntityRegistry,
+            LatencyGuardian latencyGuardian
     ) {
         this.profiler = profiler;
         this.optimizer = optimizer;
         this.traceService = traceService;
         this.virtualEntityRegistry = virtualEntityRegistry;
+        this.latencyGuardian = latencyGuardian;
     }
 
     public void register() {
-        if (optimizingListener != null || monitorListener != null) {
-            return;
-        }
+        if (optimizingListener != null || monitorListener != null) return;
 
         optimizingListener = PacketEvents.getAPI()
                 .getEventManager()
@@ -54,16 +56,12 @@ public final class PacketEventsBridge {
 
     public void unregister() {
         if (optimizingListener != null) {
-            PacketEvents.getAPI()
-                    .getEventManager()
-                    .unregisterListener(optimizingListener);
+            PacketEvents.getAPI().getEventManager().unregisterListener(optimizingListener);
             optimizingListener = null;
         }
 
         if (monitorListener != null) {
-            PacketEvents.getAPI()
-                    .getEventManager()
-                    .unregisterListener(monitorListener);
+            PacketEvents.getAPI().getEventManager().unregisterListener(monitorListener);
             monitorListener = null;
         }
     }
@@ -74,34 +72,30 @@ public final class PacketEventsBridge {
         }
 
         @Override
-        public void onPacketSend(PacketSendEvent event) {
-            if (!(event.getPlayer() instanceof Player player)) {
-                return;
+        public void onPacketReceive(PacketReceiveEvent event) {
+            if (event.getPlayer() instanceof Player player) {
+                latencyGuardian.observeInbound(player.getUniqueId(), event);
             }
+        }
+
+        @Override
+        public void onPacketSend(PacketSendEvent event) {
+            if (!(event.getPlayer() instanceof Player player)) return;
 
             UUID playerId = player.getUniqueId();
             String packetName = event.getPacketName();
             int observedBytes = readableBytes(event.getByteBuf());
 
-            profiler.recordRawOutbound(
-                    playerId,
-                    observedBytes,
-                    packetName
-            );
+            profiler.recordRawOutbound(playerId, observedBytes, packetName);
 
-            if (event.isCancelled()) {
-                return;
-            }
+            if (event.isCancelled()) return;
 
             long now = System.currentTimeMillis();
 
             switch (packetName) {
                 case "ENTITY_METADATA" -> handleMetadata(event, playerId, now);
-                case "ENTITY_TELEPORT", "ENTITY_VELOCITY" -> observeEntityActivity(
-                        event,
-                        playerId,
-                        packetName
-                );
+                case "ENTITY_TELEPORT", "ENTITY_VELOCITY" ->
+                        observeEntityActivity(event, playerId, packetName);
                 case "PARTICLE" -> {
                     if (optimizer.shouldSuppressParticle(playerId, now)) {
                         event.setCancelled(true);
@@ -125,38 +119,19 @@ public final class PacketEventsBridge {
             }
         }
 
-        private void handleMetadata(
-                PacketSendEvent event,
-                UUID playerId,
-                long now
-        ) {
+        private void handleMetadata(PacketSendEvent event, UUID playerId, long now) {
             byte[] payload = copyPayload(event.getByteBuf());
             int entityId = readFirstVarInt(event.getByteBuf());
 
-            if (entityId < 0 || payload.length == 0) {
-                return;
-            }
+            if (entityId < 0 || payload.length == 0) return;
 
-            virtualEntityRegistry.recordActivity(
-                    playerId,
-                    entityId,
-                    "ENTITY_METADATA"
-            );
+            virtualEntityRegistry.recordActivity(playerId, entityId, "ENTITY_METADATA");
 
             if (traceService.isActive(playerId)) {
-                traceService.record(
-                        playerId,
-                        entityId,
-                        "ENTITY_METADATA"
-                );
+                traceService.record(playerId, entityId, "ENTITY_METADATA");
             }
 
-            if (optimizer.shouldSuppressMetadata(
-                    playerId,
-                    entityId,
-                    payload,
-                    now
-            )) {
+            if (optimizer.shouldSuppressMetadata(playerId, entityId, payload, now)) {
                 event.setCancelled(true);
             }
         }
@@ -167,22 +142,12 @@ public final class PacketEventsBridge {
                 String packetName
         ) {
             int entityId = readFirstVarInt(event.getByteBuf());
-            if (entityId < 0) {
-                return;
-            }
+            if (entityId < 0) return;
 
-            virtualEntityRegistry.recordActivity(
-                    playerId,
-                    entityId,
-                    packetName
-            );
+            virtualEntityRegistry.recordActivity(playerId, entityId, packetName);
 
             if (traceService.isActive(playerId)) {
-                traceService.record(
-                        playerId,
-                        entityId,
-                        packetName
-                );
+                traceService.record(playerId, entityId, packetName);
             }
         }
     }
@@ -208,15 +173,11 @@ public final class PacketEventsBridge {
 
         @Override
         public void onPacketSend(PacketSendEvent event) {
-            if (!(event.getPlayer() instanceof Player player)) {
+            if (!(event.getPlayer() instanceof Player player) || event.isCancelled()) {
                 return;
             }
 
             UUID playerId = player.getUniqueId();
-
-            if (event.isCancelled()) {
-                return;
-            }
 
             profiler.recordForwardedOutbound(
                     playerId,
@@ -227,10 +188,7 @@ public final class PacketEventsBridge {
             switch (event.getPacketName()) {
                 case "SPAWN_ENTITY" -> recordSpawnEntity(event, playerId);
                 case "SPAWN_PLAYER" -> recordSpawnPlayer(event, playerId);
-                case "SPAWN_EXPERIENCE_ORB" -> recordSpawnExperienceOrb(
-                        event,
-                        playerId
-                );
+                case "SPAWN_EXPERIENCE_ORB" -> recordSpawnExperienceOrb(event, playerId);
                 case "DESTROY_ENTITIES" -> handleDestroy(event, playerId);
                 case "RESPAWN", "JOIN_GAME" -> {
                     optimizer.clearPlayer(playerId);
@@ -241,20 +199,16 @@ public final class PacketEventsBridge {
             }
         }
 
-        private void recordSpawnEntity(
-                PacketSendEvent event,
-                UUID playerId
-        ) {
-            Object duplicate = null;
-
+        private void recordSpawnEntity(PacketSendEvent event, UUID playerId) {
             try {
-                duplicate = ByteBufHelper.duplicate(event.getByteBuf());
-
+                Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
                 int entityId = ByteBufHelper.readVarInt(duplicate);
+
                 UUID entityUuid = new UUID(
                         ByteBufHelper.readLong(duplicate),
                         ByteBufHelper.readLong(duplicate)
                 );
+
                 int typeId = ByteBufHelper.readVarInt(duplicate);
 
                 EntityType entityType = EntityTypes.getById(
@@ -274,18 +228,14 @@ public final class PacketEventsBridge {
                         typeName
                 );
             } catch (RuntimeException ignored) {
-                // Diagnostics must never affect packet delivery.
             }
         }
 
-        private void recordSpawnPlayer(
-                PacketSendEvent event,
-                UUID playerId
-        ) {
+        private void recordSpawnPlayer(PacketSendEvent event, UUID playerId) {
             try {
                 Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
-
                 int entityId = ByteBufHelper.readVarInt(duplicate);
+
                 UUID entityUuid = new UUID(
                         ByteBufHelper.readLong(duplicate),
                         ByteBufHelper.readLong(duplicate)
@@ -299,15 +249,12 @@ public final class PacketEventsBridge {
                         "minecraft:player"
                 );
             } catch (RuntimeException ignored) {
-                // Diagnostics must never affect packet delivery.
             }
         }
 
-        private void recordSpawnExperienceOrb(
-                PacketSendEvent event,
-                UUID playerId
-        ) {
+        private void recordSpawnExperienceOrb(PacketSendEvent event, UUID playerId) {
             int entityId = readFirstVarInt(event.getByteBuf());
+
             if (entityId >= 0) {
                 virtualEntityRegistry.recordSpawn(
                         playerId,
@@ -319,10 +266,7 @@ public final class PacketEventsBridge {
             }
         }
 
-        private void handleDestroy(
-                PacketSendEvent event,
-                UUID playerId
-        ) {
+        private void handleDestroy(PacketSendEvent event, UUID playerId) {
             try {
                 Object duplicate = ByteBufHelper.duplicate(event.getByteBuf());
                 int count = ByteBufHelper.readVarInt(duplicate);
@@ -358,9 +302,7 @@ public final class PacketEventsBridge {
 
     private int readableBytes(Object byteBuf) {
         try {
-            return byteBuf == null
-                    ? 0
-                    : ByteBufHelper.readableBytes(byteBuf);
+            return byteBuf == null ? 0 : ByteBufHelper.readableBytes(byteBuf);
         } catch (RuntimeException ignored) {
             return 0;
         }
