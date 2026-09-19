@@ -19,6 +19,8 @@ import work.spacecat.twnetoptimizer.server.ServerDiagnostics;
 import work.spacecat.twnetoptimizer.trace.EntityTraceService;
 import work.spacecat.twnetoptimizer.trace.VirtualEntityRegistry;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryUsage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -960,6 +962,49 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + "----- Lifecycle state -----"
         );
 
+        MemoryUsage heap =
+                ManagementFactory.getMemoryMXBean()
+                        .getHeapMemoryUsage();
+
+        long gcCollections = ManagementFactory
+                .getGarbageCollectorMXBeans()
+                .stream()
+                .mapToLong(bean ->
+                        Math.max(0L, bean.getCollectionCount()))
+                .sum();
+
+        long gcTimeMs = ManagementFactory
+                .getGarbageCollectorMXBeans()
+                .stream()
+                .mapToLong(bean ->
+                        Math.max(0L, bean.getCollectionTime()))
+                .sum();
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "JVM heap used / committed / max: "
+                        + ChatColor.WHITE
+                        + humanBytes(heap.getUsed())
+                        + " / "
+                        + humanBytes(heap.getCommitted())
+                        + " / "
+                        + (heap.getMax() < 0L
+                        ? "unknown"
+                        : humanBytes(heap.getMax()))
+        );
+
+        sender.sendMessage(
+                ChatColor.GRAY
+                        + "GC since JVM start: "
+                        + ChatColor.WHITE
+                        + gcCollections
+                        + " collections / "
+                        + gcTimeMs
+                        + " ms"
+                        + ChatColor.DARK_GRAY
+                        + " (observed only)"
+        );
+
         sender.sendMessage(
                 ChatColor.GRAY
                         + "Metadata cache: "
@@ -1073,6 +1118,12 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
                         + ", skipped "
                         + ChatColor.WHITE
                         + trace.skippedEntities()
+                        + ChatColor.GRAY
+                        + ", cleaned sessions / trimmed entities "
+                        + ChatColor.WHITE
+                        + trace.cleanupRemovedSessions()
+                        + " / "
+                        + trace.trimRemovedEntities()
         );
 
         sender.sendMessage(
