@@ -152,6 +152,13 @@ public final class EntityTraceService {
         totalEntities.set(0);
     }
 
+    public void resetMetrics() {
+        highWaterEntities.set(totalEntities.get());
+        skippedEntities.reset();
+        cleanupRemovedSessions.reset();
+        trimRemovedEntities.reset();
+    }
+
     private EntityCounters createCountersIfCapacity(
             TraceSession session,
             int entityId
