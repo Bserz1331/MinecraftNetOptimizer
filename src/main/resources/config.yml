@@ -1,0 +1,13 @@
+# TWNetOptimizer v0.1
+# Monitor-only by design. This release never cancels, delays, rewrites, or suppresses packets.
+mode: monitor-only
+
+sampling:
+  top-packet-types: 5
+
+burst:
+  outbound-packets-per-second: 800
+  outbound-observed-bytes-per-second: 1048576
+
+logging:
+  log-bursts-to-console: false

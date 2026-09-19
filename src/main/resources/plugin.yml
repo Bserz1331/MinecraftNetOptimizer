@@ -1,0 +1,18 @@
+name: TWNetOptimizer
+version: '${project.version}'
+main: work.spacecat.twnetoptimizer.TWNetOptimizerPlugin
+api-version: '1.20'
+author: Bserz1331
+description: Monitor-first packet and network profiler for Paper 1.20.4.
+website: https://github.com/Bserz1331/TWNetOptimizer
+softdepend:
+  - packetevents
+commands:
+  netdebug:
+    description: Shows TWNetOptimizer network diagnostics.
+    usage: /netdebug [player|top|status|reset|reload]
+    permission: twnetoptimizer.admin
+permissions:
+  twnetoptimizer.admin:
+    description: Allows use of TWNetOptimizer diagnostics.
+    default: op
