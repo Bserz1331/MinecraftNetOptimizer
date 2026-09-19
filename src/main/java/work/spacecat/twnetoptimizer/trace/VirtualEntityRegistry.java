@@ -242,6 +242,13 @@ public final class VirtualEntityRegistry {
         totalEntities.set(0);
     }
 
+    public void resetMetrics() {
+        highWaterEntities.set(totalEntities.get());
+        skippedEntities.reset();
+        staleRemovedEntities.reset();
+        trimRemovedEntities.reset();
+    }
+
     private TrackedEntity createIfCapacity(
             ConcurrentHashMap<Integer, TrackedEntity> entities,
             int entityId,
