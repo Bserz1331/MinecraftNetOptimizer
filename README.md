@@ -2,11 +2,23 @@
 
 TWNetOptimizer is a **Paper 1.20.4 / Java 17** network and server profiler with a conservative safe-optimization layer for long-distance Minecraft servers.
 
-## v0.3 scope
+## v0.4
 
-This version combines profiling, safe packet optimization, entity attribution, and server-side diagnostics.
+v0.4 adds two important diagnostic improvements:
 
-### Safe optimization
+1. **Raw vs forwarded traffic**
+   - raw outbound packets are counted before TWNetOptimizer filtering
+   - forwarded outbound packets are counted from a PacketEvents MONITOR listener only when the final event is not cancelled
+   - `/netdebug <player>` now shows raw, forwarded, not-forwarded and reduction percentage
+
+2. **Virtual entity registry**
+   - tracks forwarded `SPAWN_ENTITY`, `SPAWN_PLAYER` and `SPAWN_EXPERIENCE_ORB`
+   - records entity ID, spawn UUID, spawn packet and protocol entity type
+   - continuously counts ENTITY_METADATA / ENTITY_TELEPORT / ENTITY_VELOCITY activity
+   - compares tracked client entity IDs with loaded Bukkit entity IDs
+   - `/netdebug virtual <player>` shows virtual spawn types and top hot virtual entities
+
+## Safe optimization
 
 Enabled by default:
 
@@ -25,7 +37,7 @@ Enabled by default:
   - cosmetic only
   - adaptive lower cap when a player is already in burst/high-ping conditions
 
-### Explicit safety boundary
+## Safety boundary
 
 TWNetOptimizer does **not** optimize or suppress:
 
@@ -40,24 +52,58 @@ TWNetOptimizer does **not** optimize or suppress:
 
 Those categories are monitored and traced, not filtered.
 
-## Why there is no arbitrary packet batching
+## Commands
 
-Vanilla clients expect legal Minecraft protocol packets. TWNetOptimizer does not invent a custom combined packet.
+```
+/netdebug
+/netdebug <player>
+/netdebug top
+/netdebug status
+/netdebug server
+/netdebug advice
+/netdebug trace <player> [seconds]
+/netdebug entities <player>
+/netdebug virtual <player>
+/netdebug optimize <status|on|off|reset>
+/netdebug reset
+/netdebug reload
+```
 
-Instead it reduces redundant **state updates before transport** where this can be done safely. Netty/TCP may still batch writes at the transport layer.
+Permission: `twnetoptimizer.admin` (default: op)
 
-## Entity trace
+## Reading raw vs forwarded
+
+Example:
+
+```
+Raw outbound:       30000 pkt/s
+Forwarded outbound: 20000 pkt/s
+Not forwarded:      10000 pkt/s (33.3%)
+```
+
+`Not forwarded` is the difference between the observed raw and final forwarded counts. It can include cancellations by other packet listeners as well as TWNetOptimizer.
+
+The separate `TWNO suppressed since reset` counter reports only suppressions performed by TWNetOptimizer's own metadata/UI/particle modules.
+
+## Virtual entity diagnosis
+
+After a full restart, TWNetOptimizer observes entity spawn packets sent to each client.
 
 Use:
 
 ```
 /netdebug trace <player> 10
 /netdebug entities <player>
+/netdebug virtual <player>
 ```
 
-The trace attributes ENTITY_METADATA / ENTITY_TELEPORT / ENTITY_VELOCITY to entity IDs.
+When a hot entity ID is not a loaded Bukkit entity but its spawn packet was observed, the trace can now report a protocol type such as:
 
-Loaded Bukkit entities are shown by type. IDs that cannot be matched are shown as `UNKNOWN / VIRTUAL`, which is useful for diagnosing packet-only NPC/model systems.
+```
+VIRTUAL minecraft:item_display [SPAWN_ENTITY]
+```
+
+instead of only `UNKNOWN / VIRTUAL`.
 
 ## Server diagnostics
 
@@ -75,25 +121,7 @@ Server diagnostics include:
 - average player ping
 - pending Bukkit scheduler task counts by plugin
 
-The scheduler count is a diagnostic signal only. It does not prove task frequency or CPU cost.
-
-## Commands
-
-```
-/netdebug
-/netdebug <player>
-/netdebug top
-/netdebug status
-/netdebug server
-/netdebug advice
-/netdebug trace <player> [seconds]
-/netdebug entities <player>
-/netdebug optimize <status|on|off|reset>
-/netdebug reset
-/netdebug reload
-```
-
-Permission: `twnetoptimizer.admin` (default: op)
+Pending scheduler task count is a diagnostic signal only. It does not prove task frequency or CPU cost.
 
 ## Requirements
 
@@ -113,10 +141,10 @@ GitHub Actions builds every push / pull request and uploads `TWNetOptimizer-*.ja
 
 ## Important byte-count caveat
 
-Observed bytes are PacketEvents buffer bytes before transport compression/encryption and are not NIC wire bytes.
+Observed bytes are PacketEvents-layer buffer bytes and are not NIC wire bytes after compression, encryption, TCP framing or retransmission.
 
 ## Upstream optimization
 
-Packet suppression can save encoding, Netty, compression, network and client processing, but it cannot undo CPU work that another plugin already performed before creating the packet.
+Packet suppression can save later network-path work, but it cannot undo CPU work another plugin already performed before creating a packet.
 
-If tracing shows one plugin/system is generating unchanged state every tick, fixing that producer with dirty flags, event-driven updates, lower update cadence, or changed-only synchronization is still the best long-term optimization.
+If the virtual-entity registry shows a plugin-generated entity repeatedly receiving unchanged state, fixing that producer with dirty flags, changed-only synchronization, lower update cadence or event-driven updates remains the preferred long-term optimization.

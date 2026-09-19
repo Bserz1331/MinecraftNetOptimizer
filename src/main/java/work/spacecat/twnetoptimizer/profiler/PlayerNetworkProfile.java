@@ -18,13 +18,16 @@ public final class PlayerNetworkProfile {
         this.latestSnapshot = ProfileSnapshot.empty(playerId);
     }
 
-    public void record(TrafficDirection direction, int observedBytes, String packetName) {
-        activeBucket.get().record(
-                direction,
-                observedBytes,
-                packetName,
-                PacketCategory.classify(packetName)
-        );
+    public void recordInbound(int observedBytes, String packetName) {
+        activeBucket.get().recordInbound(observedBytes, packetName);
+    }
+
+    public void recordRawOutbound(int observedBytes, String packetName) {
+        activeBucket.get().recordRawOutbound(observedBytes, packetName);
+    }
+
+    public void recordForwardedOutbound(int observedBytes, String packetName) {
+        activeBucket.get().recordForwardedOutbound(observedBytes, packetName);
     }
 
     public ProfileSnapshot rollover(
@@ -36,28 +39,38 @@ public final class PlayerNetworkProfile {
         TrafficBucket bucket = activeBucket.getAndSet(new TrafficBucket());
 
         long inboundPackets = bucket.inboundPackets.sum();
-        long outboundPackets = bucket.outboundPackets.sum();
+        long forwardedPackets = bucket.forwardedOutboundPackets.sum();
+        long rawPackets = bucket.rawOutboundPackets.sum();
+
         long inboundBytes = bucket.inboundObservedBytes.sum();
-        long outboundBytes = bucket.outboundObservedBytes.sum();
+        long forwardedBytes = bucket.forwardedOutboundObservedBytes.sum();
+        long rawBytes = bucket.rawOutboundObservedBytes.sum();
 
         boolean burst =
-                outboundPackets >= outboundPacketBurstThreshold
-                        || outboundBytes >= outboundByteBurstThreshold;
+                forwardedPackets >= outboundPacketBurstThreshold
+                        || forwardedBytes >= outboundByteBurstThreshold;
 
         ProfileSnapshot snapshot = new ProfileSnapshot(
                 playerId,
                 pingMs,
                 inboundPackets,
-                outboundPackets,
+                forwardedPackets,
+                rawPackets,
                 inboundBytes,
-                outboundBytes,
-                bucket.chunkPackets.sum(),
-                bucket.entityPackets.sum(),
-                bucket.uiPackets.sum(),
-                bucket.otherPackets.sum(),
+                forwardedBytes,
+                rawBytes,
+                bucket.forwardedChunkPackets.sum(),
+                bucket.forwardedEntityPackets.sum(),
+                bucket.forwardedUiPackets.sum(),
+                bucket.forwardedOtherPackets.sum(),
+                bucket.rawChunkPackets.sum(),
+                bucket.rawEntityPackets.sum(),
+                bucket.rawUiPackets.sum(),
+                bucket.rawOtherPackets.sum(),
                 burst,
                 top(bucket.inboundTypes, topPacketTypes),
-                top(bucket.outboundTypes, topPacketTypes),
+                top(bucket.forwardedOutboundTypes, topPacketTypes),
+                top(bucket.rawOutboundTypes, topPacketTypes),
                 System.currentTimeMillis()
         );
 
