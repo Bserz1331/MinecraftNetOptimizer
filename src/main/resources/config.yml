@@ -1,6 +1,9 @@
-# TWNetOptimizer v0.1
-# Monitor-only by design. This release never cancels, delays, rewrites, or suppresses packets.
-mode: monitor-only
+# TWNetOptimizer v0.3
+# Safe optimizer: only redundant persistent-state packets and cosmetic particle excess
+# are suppressible. Movement, teleport, velocity, combat, inventory, chunk/world
+# consistency, KeepAlive and transaction/ack packets are never optimized here.
+
+mode: optimize-safe
 
 sampling:
   top-packet-types: 5
@@ -8,6 +11,37 @@ sampling:
 burst:
   outbound-packets-per-second: 800
   outbound-observed-bytes-per-second: 1048576
+
+optimizer:
+  enabled: true
+
+  metadata-dedupe:
+    enabled: true
+    # Identical metadata for the same player + entity is suppressed until changed.
+    # A periodic pass-through refresh prevents an indefinitely stale cache.
+    refresh-ms: 30000
+
+  ui-dedupe:
+    enabled: true
+    # Exact duplicates only. Applies to persistent UI state packets:
+    # BOSS_BAR, SCOREBOARD_OBJECTIVE, UPDATE_SCORE, DISPLAY_SCOREBOARD,
+    # TEAMS, PLAYER_LIST_HEADER_AND_FOOTER.
+    duplicate-window-ms: 2000
+
+  particle-throttle:
+    enabled: true
+    max-per-second: 500
+    adaptive: true
+    adaptive-max-per-second: 250
+    high-ping-ms: 180
+
+  cache:
+    stale-entry-ms: 300000
+
+trace:
+  default-seconds: 10
+  max-seconds: 60
+  top-entities: 15
 
 logging:
   log-bursts-to-console: false
