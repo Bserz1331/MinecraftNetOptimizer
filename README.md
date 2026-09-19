@@ -14,8 +14,8 @@ TWNetOptimizer never calls `System.gc()`.
 
 The following runtime structures now have hard limits:
 
-- ENTITY_METADATA state cache
-- logical UI state cache
+- ENTITY_METADATA state cache, with global and per-player limits
+- logical UI state cache, with global and per-player limits
 - particle rate windows
 - virtual entity tracking per viewer
 - entity trace counters per session
@@ -29,7 +29,9 @@ When an optimization cache reaches its limit, TWNetOptimizer fails open:
 
 Gameplay correctness is preferred over cache hit rate.
 
-Oversized packet payloads are also not retained for dedupe.
+A single player cannot consume the entire metadata or UI cache budget. New per-player hard limits fail open in the same way as the global limits.
+
+Oversized or otherwise uncacheable payloads are not retained for dedupe. If a previously cached key later forwards an uncacheable payload, the old cached state is invalidated immediately so a future state transition cannot be mistaken for a duplicate.
 
 ### Lifecycle cleanup
 
@@ -113,8 +115,8 @@ For new installations:
 - Latency Guardian: ON
 - combat window: 2500 ms
 - duplicate refresh combat deferral: max 5000 ms
-- metadata cache: max 16384 entries
-- UI cache: max 4096 entries
+- metadata cache: max 16384 entries globally / 2048 per player
+- UI cache: max 4096 entries globally / 512 per player
 - cached payload: max 65536 bytes
 - virtual entity tracking: max 4096 entries per viewer
 
@@ -124,10 +126,20 @@ Useful commands:
 
     /netdebug <player>
     /netdebug latency <player>
+    /netdebug lifecycle
+    /netdebug lifecycle <player>
     /netdebug trace <player> 10
     /netdebug entities <player>
     /netdebug virtual <player>
     /netdebug server
     /netdebug advice
+
+### Lifecycle verification
+
+`/netdebug lifecycle` exposes current entries, configured limits, high-water marks, fail-open skips, stale removals and trace / virtual-entity retention.
+
+`/netdebug lifecycle <player>` shows the same state for one online player.
+
+For a live soak test, capture the command output before and after repeated join / quit, world changes and entity-heavy movement. Current state should return toward the active-player baseline after lifecycle events and stale-maintenance windows. High-water values may remain high by design because they describe peak usage.
 
 TWNetOptimizer cannot reduce physical network RTT. Its purpose is to reduce avoidable packet work and state retention while preserving gameplay correctness first.
