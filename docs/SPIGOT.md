@@ -1,8 +1,8 @@
-# TWNetOptimizer
+# SpaceCatNetOptimizer
 
 ## Conservative network optimization and diagnostics for Paper servers
 
-TWNetOptimizer focuses on network lifecycle optimization and packet workload diagnostics for Paper servers. It helps identify avoidable packet work and bounds its own packet-related state without promising impossible ping or TPS guarantees.
+SpaceCatNetOptimizer focuses on network lifecycle optimization and packet workload diagnostics for Paper servers. It helps identify avoidable packet work and bounds its own packet-related state without promising impossible ping or TPS guarantees.
 
 ### Features
 
@@ -18,7 +18,7 @@ TWNetOptimizer focuses on network lifecycle optimization and packet workload dia
 
 ### Safety boundaries
 
-TWNetOptimizer does not call `System.gc()`, modify JVM GC settings, change Netty watermarks, use invasive NMS hacks, or modify third-party plugin internals. It does not actively throttle, drop, coalesce, or reorder movement, attack input, knockback, teleport, inventory acknowledgement, chunk / world consistency, block-state, or KeepAlive traffic.
+SpaceCatNetOptimizer does not call `System.gc()`, modify JVM GC settings, change Netty watermarks, use invasive NMS hacks, or modify third-party plugin internals. It does not actively throttle, drop, coalesce, or reorder movement, attack input, knockback, teleport, inventory acknowledgement, chunk / world consistency, block-state, or KeepAlive traffic.
 
 Particle limiting is disabled by default and applies only to cosmetic particle traffic when explicitly enabled.
 
@@ -31,3 +31,5 @@ PacketEvents `2.13.0` is required for packet-level profiling and optimization. W
 First public-release candidate: `v0.8.0`.
 
 License: GPL-3.0.
+
+Support and community: https://discord.gg/ukTERDqckB

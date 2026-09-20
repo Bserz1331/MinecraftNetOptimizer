@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>work.spacecat</groupId>
-    <artifactId>TWNetOptimizer</artifactId>
+    <artifactId>SpaceCatNetOptimizer</artifactId>
     <version>0.8.0</version>
     <packaging>jar</packaging>
 
-    <name>TWNetOptimizer</name>
+    <name>SpaceCatNetOptimizer</name>
     <description>Safe packet optimizer and network/server profiler for Paper 1.20.4.</description>
 
     <licenses>
@@ -64,7 +64,7 @@
     </dependencies>
 
     <build>
-        <finalName>TWNetOptimizer-${project.version}</finalName>
+        <finalName>SpaceCatNetOptimizer-${project.version}</finalName>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>

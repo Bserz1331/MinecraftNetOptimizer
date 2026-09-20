@@ -1,14 +1,14 @@
-# TWNetOptimizer
+# SpaceCatNetOptimizer
 
 Conservative network optimization and diagnostics for Paper servers.
 
-## What is TWNetOptimizer
+## What is SpaceCatNetOptimizer
 
-TWNetOptimizer reduces avoidable packet workload and manages packet-related runtime state while prioritizing gameplay correctness and plugin compatibility.
+SpaceCatNetOptimizer reduces avoidable packet workload and manages packet-related runtime state while prioritizing gameplay correctness and plugin compatibility.
 
 Its scope is **network lifecycle optimization / packet workload optimization**. It is not a RAM cleaner, ping booster, JVM GC manager, general-purpose TPS booster, or forced packet compressor.
 
-TWNetOptimizer observes packet traffic, applies conservative deduplication to safe packet classes, bounds its own diagnostic and optimizer state, and exposes server-side diagnostics through `/netdebug`.
+SpaceCatNetOptimizer observes packet traffic, applies conservative deduplication to safe packet classes, bounds its own diagnostic and optimizer state, and exposes server-side diagnostics through `/netdebug`.
 
 ## Features
 
@@ -34,19 +34,19 @@ These features reduce avoidable packet work and allocation / retention pressure.
 
 ## Safety / Compatibility Philosophy
 
-TWNetOptimizer is compatibility-first:
+SpaceCatNetOptimizer is compatibility-first:
 
 - No `System.gc()` calls.
 - No JVM GC configuration changes.
 - No Netty channel watermark changes.
 - No NMS or CraftBukkit version-specific hacks.
 - No inspection or mutation of third-party plugin internals.
-- No PacketEvents buffer retain / release changes outside TWNetOptimizer ownership.
+- No PacketEvents buffer retain / release changes outside SpaceCatNetOptimizer ownership.
 - No TCP ordering changes.
 - New optimizer and diagnostic state is bounded and has lifecycle cleanup.
 - Cache saturation is fail-open: when a cache is full, a new key is not retained and the packet is forwarded normally.
 
-TWNetOptimizer does not actively throttle, drop, coalesce, or reorder critical gameplay traffic:
+SpaceCatNetOptimizer does not actively throttle, drop, coalesce, or reorder critical gameplay traffic:
 
 - Movement.
 - Attack input.
@@ -65,7 +65,7 @@ The optional particle limiter is disabled by default and is intended only for co
 - Java 17 bytecode compatibility for this build. The actual server JVM must also satisfy the Java requirement of the selected Paper version.
 - PacketEvents `2.13.0` is required for packet-level profiling and optimization.
 
-If PacketEvents is not installed or is inactive, TWNetOptimizer can load and its command surface remains available, but packet-level profiling, safe packet optimization, and Latency Guardian packet observations are disabled. `/netdebug status` reports this state.
+If PacketEvents is not installed or is inactive, SpaceCatNetOptimizer can load and its command surface remains available, but packet-level profiling, safe packet optimization, and Latency Guardian packet observations are disabled. `/netdebug status` reports this state.
 
 ## Supported Versions
 
@@ -81,7 +81,7 @@ Minecraft 26.3 support depends on stable PacketEvents protocol support and compa
 
 1. Install a compatible Paper server.
 2. Install PacketEvents `2.13.0` or a verified compatible build.
-3. Copy `TWNetOptimizer-0.8.0.jar` into the server's `plugins/` directory.
+3. Copy `SpaceCatNetOptimizer-0.8.0.jar` into the server's `plugins/` directory.
 4. Start the server.
 5. Run `/netdebug status`.
 6. Run `/netdebug lifecycle` to verify optimizer-owned lifecycle state.
@@ -115,11 +115,11 @@ All commands require `twnetoptimizer.admin`.
 
 | Permission | Default | Description |
 | --- | --- | --- |
-| `twnetoptimizer.admin` | `op` | Use TWNetOptimizer diagnostics and optimizer controls. |
+| `twnetoptimizer.admin` | `op` | Use SpaceCatNetOptimizer diagnostics and optimizer controls. The node is retained for compatibility. |
 
 ## Configuration
 
-Conservative defaults are provided in `plugins/TWNetOptimizer/config.yml`:
+Conservative defaults are provided in `plugins/SpaceCatNetOptimizer/config.yml`:
 
 - `optimizer.metadata-dedupe.enabled`: safe metadata deduplication, enabled by default.
 - `optimizer.ui-dedupe.enabled`: changed-only UI deduplication, enabled by default.
@@ -129,7 +129,7 @@ Conservative defaults are provided in `plugins/TWNetOptimizer/config.yml`:
 - `trace.*`: trace duration, result retention, entity limits, and virtual-entity limits.
 - `burst.*`: outbound packet and observed-byte burst thresholds.
 
-When a cache reaches a hard limit, TWNetOptimizer skips caching the new key and forwards the packet normally. Oversized or otherwise uncacheable payloads are not retained for deduplication.
+When a cache reaches a hard limit, SpaceCatNetOptimizer skips caching the new key and forwards the packet normally. Oversized or otherwise uncacheable payloads are not retained for deduplication.
 
 ## Lifecycle Diagnostics
 
@@ -154,7 +154,7 @@ When a cache reaches a hard limit, TWNetOptimizer skips caching the new key and 
 
 `/netdebug lifecycle <player>` shows the bounded metadata, UI, particle, trace, and Virtual Entity state for one online player.
 
-GC metrics are observation-only. TWNetOptimizer never requests a GC.
+GC metrics are observation-only. SpaceCatNetOptimizer never requests a GC.
 
 ## Compatibility Notes
 
@@ -171,9 +171,9 @@ GC metrics are observation-only. TWNetOptimizer never requests a GC.
 3. Check the server log for PacketEvents integration errors.
 4. Confirm that the server JVM satisfies the selected Paper version's Java requirement.
 5. Temporarily disable a suspected conflicting plugin on a staging server and compare raw / forwarded profiles.
-6. Include the Paper, Java, PacketEvents, and TWNetOptimizer versions, major plugins, diagnostics output, logs, and reproduction steps in a bug report.
+6. Include the Paper, Java, PacketEvents, and SpaceCatNetOptimizer versions, major plugins, diagnostics output, logs, and reproduction steps in a bug report.
 
-TWNetOptimizer cannot repair another plugin's memory leak, guarantee a fixed RAM reduction, or prove a network RTT improvement. Use the diagnostics to isolate packet workload and lifecycle state, then verify changes with a controlled server comparison.
+SpaceCatNetOptimizer cannot repair another plugin's memory leak, guarantee a fixed RAM reduction, or prove a network RTT improvement. Use the diagnostics to isolate packet workload and lifecycle state, then verify changes with a controlled server comparison.
 
 ## Building from Source
 
@@ -186,18 +186,20 @@ mvn -B -ntp verify
 The build filters `src/main/resources/plugin.yml` so `${project.version}` is replaced with the Maven project version. The release artifact is:
 
 ```text
-target/TWNetOptimizer-0.8.0.jar
+target/SpaceCatNetOptimizer-0.8.0.jar
 ```
 
 ## License
 
-TWNetOptimizer is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+SpaceCatNetOptimizer is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
 
 License: GPL-3.0
 
 ## Release / Support Information
 
-This repository is being prepared for its first public release, `v0.8.0`. The release candidate is prepared through a pull request while the GitHub repository remains private.
+This repository is being prepared for its first public release, `v0.8.0`. The release candidate is prepared through a pull request before platform publication.
+
+Support and community: [Discord](https://discord.gg/ukTERDqckB)
 
 Platform-specific listing copy is available in:
 

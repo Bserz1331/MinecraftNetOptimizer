@@ -1,8 +1,8 @@
-# TWNetOptimizer v0.8.0
+# SpaceCatNetOptimizer v0.8.0
 
 ## First public release
 
-TWNetOptimizer is a conservative Paper network optimizer and diagnostic toolkit focused on network lifecycle optimization and packet workload optimization.
+SpaceCatNetOptimizer is a conservative Paper network optimizer and diagnostic toolkit focused on network lifecycle optimization and packet workload optimization.
 
 ### Highlights
 
@@ -18,7 +18,7 @@ TWNetOptimizer is a conservative Paper network optimizer and diagnostic toolkit 
 
 ### Safety boundaries
 
-TWNetOptimizer does not call `System.gc()`, modify JVM GC configuration, change Netty watermarks, change TCP ordering, inspect third-party plugin internals, or actively throttle, drop, coalesce, or reorder critical gameplay traffic.
+SpaceCatNetOptimizer does not call `System.gc()`, modify JVM GC configuration, change Netty watermarks, change TCP ordering, inspect third-party plugin internals, or actively throttle, drop, coalesce, or reorder critical gameplay traffic.
 
 ### Compatibility
 
@@ -30,6 +30,6 @@ TWNetOptimizer does not call `System.gc()`, modify JVM GC configuration, change 
 
 ### Artifact
 
-Attach `TWNetOptimizer-0.8.0.jar` to the GitHub Release after the release PR is merged and the repository owner confirms the public-release and platform-listing steps.
+Attach `SpaceCatNetOptimizer-0.8.0.jar` to the GitHub Release after the release PR is merged and the repository owner confirms the public-release and platform-listing steps.
 
 License: GPL-3.0.

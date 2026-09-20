@@ -1,6 +1,6 @@
-# Contributing to TWNetOptimizer
+# Contributing to SpaceCatNetOptimizer
 
-TWNetOptimizer is a compatibility-first Paper plugin. Contributions should preserve gameplay correctness and keep the diagnostic and optimization state bounded.
+SpaceCatNetOptimizer is a compatibility-first Paper plugin. Contributions should preserve gameplay correctness and keep the diagnostic and optimization state bounded.
 
 - Compatibility-first design.
 - Never add forced GC or call `System.gc()`.

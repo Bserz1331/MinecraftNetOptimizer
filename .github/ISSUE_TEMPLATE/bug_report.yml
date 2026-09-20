@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible TWNetOptimizer problem
+description: Report a reproducible SpaceCatNetOptimizer problem
 title: "[Bug]: "
 body:
   - type: markdown
@@ -30,7 +30,7 @@ body:
   - type: input
     id: twnetoptimizer-version
     attributes:
-      label: TWNetOptimizer version
+      label: SpaceCatNetOptimizer version
       placeholder: 0.8.0
     validations:
       required: true

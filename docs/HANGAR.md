@@ -1,8 +1,8 @@
-# TWNetOptimizer
+# SpaceCatNetOptimizer
 
 ## Conservative network optimization and diagnostics for Paper servers
 
-TWNetOptimizer is a compatibility-first Paper plugin that reduces avoidable packet workload and bounds packet-related runtime state while prioritizing gameplay correctness.
+SpaceCatNetOptimizer is a compatibility-first Paper plugin that reduces avoidable packet workload and bounds packet-related runtime state while prioritizing gameplay correctness.
 
 ### Highlights
 
@@ -27,6 +27,8 @@ PacketEvents `2.13.0` is required for packet-level profiling and optimization. T
 ### Commands and permission
 
 Use `/netdebug` and its diagnostic and optimizer subcommands. The required permission is `twnetoptimizer.admin`, defaulting to server operators.
+
+Support and community: https://discord.gg/ukTERDqckB
 
 ### Release
 

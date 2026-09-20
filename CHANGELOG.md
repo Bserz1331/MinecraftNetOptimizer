@@ -2,7 +2,7 @@
 
 ## 0.8.0
 
-First public-release candidate for TWNetOptimizer.
+First public-release candidate for SpaceCatNetOptimizer.
 
 - Network lifecycle bounds.
 - Global and per-player Metadata / UI cache limits.
