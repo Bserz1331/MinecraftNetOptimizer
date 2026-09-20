@@ -2,7 +2,7 @@
 
 ## 0.8.0
 
-First public-release candidate for SpaceCatNetOptimizer.
+First public-release candidate for MinecraftNetOptimizer.
 
 - Network lifecycle bounds.
 - Global and per-player Metadata / UI cache limits.

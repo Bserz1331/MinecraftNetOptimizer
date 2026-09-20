@@ -33,6 +33,6 @@ jobs:
       - name: Upload plugin jar
         uses: actions/upload-artifact@v4
         with:
-          name: SpaceCatNetOptimizer
-          path: target/SpaceCatNetOptimizer-*.jar
+          name: MinecraftNetOptimizer
+          path: target/MinecraftNetOptimizer-*.jar
           if-no-files-found: error

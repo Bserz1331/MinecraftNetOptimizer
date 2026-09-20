@@ -1,8 +1,8 @@
-# SpaceCatNetOptimizer v0.8.0
+# MinecraftNetOptimizer v0.8.0
 
 ## First public release
 
-SpaceCatNetOptimizer is a conservative Paper network optimizer and diagnostic toolkit focused on network lifecycle optimization and packet workload optimization.
+MinecraftNetOptimizer is a conservative Paper network optimizer and diagnostic toolkit focused on network lifecycle optimization and packet workload optimization.
 
 ### Highlights
 
@@ -18,7 +18,7 @@ SpaceCatNetOptimizer is a conservative Paper network optimizer and diagnostic to
 
 ### Safety boundaries
 
-SpaceCatNetOptimizer does not call `System.gc()`, modify JVM GC configuration, change Netty watermarks, change TCP ordering, inspect third-party plugin internals, or actively throttle, drop, coalesce, or reorder critical gameplay traffic.
+MinecraftNetOptimizer does not call `System.gc()`, modify JVM GC configuration, change Netty watermarks, change TCP ordering, inspect third-party plugin internals, or actively throttle, drop, coalesce, or reorder critical gameplay traffic.
 
 ### Compatibility
 
@@ -30,6 +30,6 @@ SpaceCatNetOptimizer does not call `System.gc()`, modify JVM GC configuration, c
 
 ### Artifact
 
-Attach `SpaceCatNetOptimizer-0.8.0.jar` to the GitHub Release after the release PR is merged and the repository owner confirms the public-release and platform-listing steps.
+Attach `MinecraftNetOptimizer-0.8.0.jar` to the GitHub Release after the release PR is merged and the repository owner confirms the public-release and platform-listing steps.
 
 License: GPL-3.0.

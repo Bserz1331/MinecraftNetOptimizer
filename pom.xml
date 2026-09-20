@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>work.spacecat</groupId>
-    <artifactId>SpaceCatNetOptimizer</artifactId>
+    <artifactId>MinecraftNetOptimizer</artifactId>
     <version>0.8.0</version>
     <packaging>jar</packaging>
 
-    <name>SpaceCatNetOptimizer</name>
+    <name>MinecraftNetOptimizer</name>
     <description>Safe packet optimizer and network/server profiler for Paper 1.20.4.</description>
 
     <licenses>
@@ -64,7 +64,7 @@
     </dependencies>
 
     <build>
-        <finalName>SpaceCatNetOptimizer-${project.version}</finalName>
+        <finalName>MinecraftNetOptimizer-${project.version}</finalName>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>

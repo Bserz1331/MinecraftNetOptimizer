@@ -1,8 +1,8 @@
-# SpaceCatNetOptimizer
+# MinecraftNetOptimizer
 
 ## Conservative network optimization and diagnostics for Paper servers
 
-SpaceCatNetOptimizer is a compatibility-first Paper plugin that reduces avoidable packet workload and bounds packet-related runtime state while prioritizing gameplay correctness.
+MinecraftNetOptimizer is a compatibility-first Paper plugin that reduces avoidable packet workload and bounds packet-related runtime state while prioritizing gameplay correctness.
 
 ### Highlights
 
