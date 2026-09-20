@@ -1,18 +1,18 @@
-name: TWNetOptimizer
+name: SpaceCatNetOptimizer
 version: '${project.version}'
 main: work.spacecat.twnetoptimizer.TWNetOptimizerPlugin
 api-version: '1.20'
 author: Bserz1331
 description: Safe packet optimizer and network/server profiler for Paper 1.20.4.
-website: https://github.com/Bserz1331/TWNetOptimizer
+website: https://github.com/Bserz1331/SpaceCatNetOptimizer
 softdepend:
   - packetevents
 commands:
   netdebug:
-    description: Shows TWNetOptimizer diagnostics and optimizer controls.
+    description: Shows SpaceCatNetOptimizer diagnostics and optimizer controls.
     usage: /netdebug [player|top|status|server|advice|trace|entities|virtual|latency|lifecycle|optimize|reset|reload]
     permission: twnetoptimizer.admin
 permissions:
   twnetoptimizer.admin:
-    description: Allows use of TWNetOptimizer diagnostics and optimizer controls.
+    description: Allows use of SpaceCatNetOptimizer diagnostics and optimizer controls.
     default: op

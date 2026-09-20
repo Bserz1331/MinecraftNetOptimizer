@@ -121,7 +121,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_AQUA
-                        + "----- TWNetOptimizer -----"
+                        + "----- SpaceCatNetOptimizer -----"
         );
 
         sender.sendMessage(
@@ -181,7 +181,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Critical movement/attack input is observe-only and never throttled by TWNetOptimizer."
+                        + "Critical movement/attack input is observe-only and never throttled by SpaceCatNetOptimizer."
         );
     }
 
@@ -522,7 +522,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Netty writability is observation-only. TWNetOptimizer never changes channel watermarks."
+                        + "Netty writability is observation-only. SpaceCatNetOptimizer never changes channel watermarks."
         );
     }
 
@@ -1299,7 +1299,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_AQUA
-                        + "----- TWNetOptimizer advice -----"
+                        + "----- SpaceCatNetOptimizer advice -----"
         );
 
         int index = 1;
@@ -1483,7 +1483,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private static String prefix() {
         return ChatColor.DARK_AQUA
-                + "[TWNetOptimizer] ";
+                + "[SpaceCatNetOptimizer] ";
     }
 
     private static ChatColor pingColor(int ping) {

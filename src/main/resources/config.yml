@@ -1,4 +1,4 @@
-# TWNetOptimizer v0.8
+# SpaceCatNetOptimizer v0.8
 # Conservative defaults for public/complex plugin environments.
 
 mode: optimize-safe
@@ -58,7 +58,7 @@ latency-guardian:
   handoff-sample-limit: 128
   handoff-pressure-ms: 60
 
-  # Netty channel writability is sampled only, never changed by TWNetOptimizer.
+  # Netty channel writability is sampled only, never changed by SpaceCatNetOptimizer.
   backpressure-probe-interval-ms: 50
 
   cosmetic:
