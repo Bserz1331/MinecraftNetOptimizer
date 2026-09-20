@@ -121,7 +121,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_AQUA
-                        + "----- SpaceCatNetOptimizer -----"
+                        + "----- MinecraftNetOptimizer -----"
         );
 
         sender.sendMessage(
@@ -181,7 +181,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Critical movement/attack input is observe-only and never throttled by SpaceCatNetOptimizer."
+                        + "Critical movement/attack input is observe-only and never throttled by MinecraftNetOptimizer."
         );
     }
 
@@ -522,7 +522,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_GRAY
-                        + "Netty writability is observation-only. SpaceCatNetOptimizer never changes channel watermarks."
+                        + "Netty writability is observation-only. MinecraftNetOptimizer never changes channel watermarks."
         );
     }
 
@@ -1299,7 +1299,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(
                 ChatColor.DARK_AQUA
-                        + "----- SpaceCatNetOptimizer advice -----"
+                        + "----- MinecraftNetOptimizer advice -----"
         );
 
         int index = 1;
@@ -1483,7 +1483,7 @@ public final class NetDebugCommand implements CommandExecutor, TabCompleter {
 
     private static String prefix() {
         return ChatColor.DARK_AQUA
-                + "[SpaceCatNetOptimizer] ";
+                + "[MinecraftNetOptimizer] ";
     }
 
     private static ChatColor pingColor(int ping) {

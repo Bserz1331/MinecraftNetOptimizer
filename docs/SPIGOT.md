@@ -1,8 +1,8 @@
-# SpaceCatNetOptimizer
+# MinecraftNetOptimizer
 
 ## Conservative network optimization and diagnostics for Paper servers
 
-SpaceCatNetOptimizer focuses on network lifecycle optimization and packet workload diagnostics for Paper servers. It helps identify avoidable packet work and bounds its own packet-related state without promising impossible ping or TPS guarantees.
+MinecraftNetOptimizer focuses on network lifecycle optimization and packet workload diagnostics for Paper servers. It helps identify avoidable packet work and bounds its own packet-related state without promising impossible ping or TPS guarantees.
 
 ### Features
 
@@ -18,7 +18,7 @@ SpaceCatNetOptimizer focuses on network lifecycle optimization and packet worklo
 
 ### Safety boundaries
 
-SpaceCatNetOptimizer does not call `System.gc()`, modify JVM GC settings, change Netty watermarks, use invasive NMS hacks, or modify third-party plugin internals. It does not actively throttle, drop, coalesce, or reorder movement, attack input, knockback, teleport, inventory acknowledgement, chunk / world consistency, block-state, or KeepAlive traffic.
+MinecraftNetOptimizer does not call `System.gc()`, modify JVM GC settings, change Netty watermarks, use invasive NMS hacks, or modify third-party plugin internals. It does not actively throttle, drop, coalesce, or reorder movement, attack input, knockback, teleport, inventory acknowledgement, chunk / world consistency, block-state, or KeepAlive traffic.
 
 Particle limiting is disabled by default and applies only to cosmetic particle traffic when explicitly enabled.
 

@@ -1,16 +1,16 @@
-# SpaceCatNetOptimizer
+# MinecraftNetOptimizer
 
 Conservative network optimization and packet-workload diagnostics for Paper servers.
 
-[![Build](https://github.com/Bserz1331/SpaceCatNetOptimizer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Bserz1331/SpaceCatNetOptimizer/actions/workflows/build.yml)
-[![Maven verify](https://github.com/Bserz1331/SpaceCatNetOptimizer/actions/workflows/maven-verify.yml/badge.svg?branch=main)](https://github.com/Bserz1331/SpaceCatNetOptimizer/actions/workflows/maven-verify.yml)
+[![Build](https://github.com/Bserz1331/MinecraftNetOptimizer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Bserz1331/MinecraftNetOptimizer/actions/workflows/build.yml)
+[![Maven verify](https://github.com/Bserz1331/MinecraftNetOptimizer/actions/workflows/maven-verify.yml/badge.svg?branch=main)](https://github.com/Bserz1331/MinecraftNetOptimizer/actions/workflows/maven-verify.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
 ## English
 
 ### What it does
 
-SpaceCatNetOptimizer observes packet traffic, applies conservative deduplication to safe packet classes, and bounds its own diagnostic and optimizer state. It is designed to help server owners understand avoidable packet work while keeping gameplay correctness and plugin compatibility first.
+MinecraftNetOptimizer observes packet traffic, applies conservative deduplication to safe packet classes, and bounds its own diagnostic and optimizer state. It is designed to help server owners understand avoidable packet work while keeping gameplay correctness and plugin compatibility first.
 
 Its scope is network lifecycle optimization and packet-workload diagnostics. It is not a RAM cleaner, ping booster, JVM garbage-collection manager, general-purpose TPS booster, or forced packet compressor.
 
@@ -51,7 +51,7 @@ If PacketEvents is missing or inactive, the plugin can still load and its comman
 
 1. Install a compatible Paper server.
 2. Install PacketEvents `2.13.0` or a verified compatible build.
-3. Download `SpaceCatNetOptimizer-0.8.0.jar` from the [GitHub Releases](https://github.com/Bserz1331/SpaceCatNetOptimizer/releases) page.
+3. Download `MinecraftNetOptimizer-0.8.0.jar` from the [GitHub Releases](https://github.com/Bserz1331/MinecraftNetOptimizer/releases) page.
 4. Copy the JAR into the server's `plugins/` directory.
 5. Start the server and run `/netdebug status`.
 6. Run `/netdebug lifecycle` to inspect optimizer-owned lifecycle state.
@@ -83,11 +83,11 @@ Keep a backup and test changes on a staging server first. Existing configuration
 
 All commands require `twnetoptimizer.admin`, which defaults to server operators.
 
-The permission node, Java package, and plugin implementation class retain their existing technical identifiers so upgrades do not unexpectedly invalidate existing permissions or integrations. The public plugin name is `SpaceCatNetOptimizer`.
+The permission node, Java package, and plugin implementation class retain their existing technical identifiers so upgrades do not unexpectedly invalidate existing permissions or integrations. The public plugin name is `MinecraftNetOptimizer`.
 
 ### Configuration highlights
 
-Configuration is stored under `plugins/SpaceCatNetOptimizer/config.yml`.
+Configuration is stored under `plugins/MinecraftNetOptimizer/config.yml`.
 
 - `optimizer.metadata-dedupe.enabled`: safe metadata deduplication, enabled by default.
 - `optimizer.ui-dedupe.enabled`: changed-only UI deduplication, enabled by default.
@@ -97,11 +97,11 @@ Configuration is stored under `plugins/SpaceCatNetOptimizer/config.yml`.
 - `trace.*`: trace duration, result retention, entity limits, and Virtual Entity limits.
 - `burst.*`: outbound packet and observed-byte burst thresholds.
 
-When a cache reaches a hard limit, SpaceCatNetOptimizer fails open: it does not retain the new key and forwards the packet normally. Oversized or otherwise uncacheable payloads are not retained for deduplication.
+When a cache reaches a hard limit, MinecraftNetOptimizer fails open: it does not retain the new key and forwards the packet normally. Oversized or otherwise uncacheable payloads are not retained for deduplication.
 
 ### Safety boundaries
 
-SpaceCatNetOptimizer:
+MinecraftNetOptimizer:
 
 - Does not call `System.gc()`.
 - Does not modify JVM garbage-collection settings.
@@ -132,13 +132,13 @@ mvn -B -ntp verify
 The release artifact is:
 
 ```text
-target/SpaceCatNetOptimizer-0.8.0.jar
+target/MinecraftNetOptimizer-0.8.0.jar
 ```
 
 ### Source, support, and license
 
-- Source code: [GitHub repository](https://github.com/Bserz1331/SpaceCatNetOptimizer)
-- Releases: [GitHub Releases](https://github.com/Bserz1331/SpaceCatNetOptimizer/releases)
+- Source code: [GitHub repository](https://github.com/Bserz1331/MinecraftNetOptimizer)
+- Releases: [GitHub Releases](https://github.com/Bserz1331/MinecraftNetOptimizer/releases)
 - Community support: [Discord](https://discord.gg/ukTERDqckB)
 - License: [GNU GPL v3.0](LICENSE)
 
@@ -148,7 +148,7 @@ Please report reproducible compatibility or behavior issues with the Paper, Java
 
 ### 功能定位
 
-SpaceCatNetOptimizer 觀察封包流量，對安全的封包類別採取保守的去重處理，並限制自身診斷與最佳化狀態的成長。它的目標是協助伺服器管理者了解可避免的封包工作，同時優先維持遊戲正確性與插件相容性。
+MinecraftNetOptimizer 觀察封包流量，對安全的封包類別採取保守的去重處理，並限制自身診斷與最佳化狀態的成長。它的目標是協助伺服器管理者了解可避免的封包工作，同時優先維持遊戲正確性與插件相容性。
 
 本插件的範圍是網路生命週期最佳化與封包工作量診斷。它不是清理 RAM 的工具、降低 ping 的工具、JVM 垃圾回收管理器、通用 TPS 加速器，也不是強制封包壓縮器。
 
@@ -189,7 +189,7 @@ Paper 1.20.4 是主要編譯與相容性基準。目標範圍內的其他版本�
 
 1. 安裝相容的 Paper 伺服器。
 2. 安裝 PacketEvents `2.13.0` 或已驗證相容的版本。
-3. 從 [GitHub Releases](https://github.com/Bserz1331/SpaceCatNetOptimizer/releases) 下載 `SpaceCatNetOptimizer-0.8.0.jar`。
+3. 從 [GitHub Releases](https://github.com/Bserz1331/MinecraftNetOptimizer/releases) 下載 `MinecraftNetOptimizer-0.8.0.jar`。
 4. 將 JAR 複製到伺服器的 `plugins/` 目錄。
 5. 啟動伺服器並執行 `/netdebug status`。
 6. 執行 `/netdebug lifecycle` 檢查插件自身的生命週期狀態。
@@ -221,11 +221,11 @@ Paper 1.20.4 是主要編譯與相容性基準。目標範圍內的其他版本�
 
 所有指令都需要 `twnetoptimizer.admin`，預設給予伺服器管理員 / OP。
 
-為避免升級後既有權限或整合突然失效，權限節點、Java package 與插件實作類別保留既有技術識別名稱。公開插件名稱則是 `SpaceCatNetOptimizer`。
+為避免升級後既有權限或整合突然失效，權限節點、Java package 與插件實作類別保留既有技術識別名稱。公開插件名稱則是 `MinecraftNetOptimizer`。
 
 ### 設定重點
 
-設定檔位於 `plugins/SpaceCatNetOptimizer/config.yml`。
+設定檔位於 `plugins/MinecraftNetOptimizer/config.yml`。
 
 - `optimizer.metadata-dedupe.enabled`：安全的 metadata 去重，預設啟用。
 - `optimizer.ui-dedupe.enabled`：UI 變更去重，預設啟用。
@@ -235,11 +235,11 @@ Paper 1.20.4 是主要編譯與相容性基準。目標範圍內的其他版本�
 - `trace.*`：追蹤時間、結果保留、實體數量與 Virtual Entity 上限。
 - `burst.*`：外送封包與觀察位元組的突發流量門檻。
 
-快取達到硬上限時，SpaceCatNetOptimizer 會採 fail-open，不保留新的 key，並正常轉送封包。過大或其他無法快取的 payload 不會被保留作去重。
+快取達到硬上限時，MinecraftNetOptimizer 會採 fail-open，不保留新的 key，並正常轉送封包。過大或其他無法快取的 payload 不會被保留作去重。
 
 ### 安全邊界
 
-SpaceCatNetOptimizer：
+MinecraftNetOptimizer：
 
 - 不呼叫 `System.gc()`。
 - 不修改 JVM 垃圾回收設定。
@@ -270,13 +270,13 @@ mvn -B -ntp verify
 正式 artifact 為：
 
 ```text
-target/SpaceCatNetOptimizer-0.8.0.jar
+target/MinecraftNetOptimizer-0.8.0.jar
 ```
 
 ### 原始碼、支援與授權
 
-- 原始碼：[GitHub repository](https://github.com/Bserz1331/SpaceCatNetOptimizer)
-- 發布版本：[GitHub Releases](https://github.com/Bserz1331/SpaceCatNetOptimizer/releases)
+- 原始碼：[GitHub repository](https://github.com/Bserz1331/MinecraftNetOptimizer)
+- 發布版本：[GitHub Releases](https://github.com/Bserz1331/MinecraftNetOptimizer/releases)
 - 社群支援：[Discord](https://discord.gg/ukTERDqckB)
 - 授權：[GNU GPL v3.0](LICENSE)
 

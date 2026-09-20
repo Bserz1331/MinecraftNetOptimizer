@@ -58,13 +58,13 @@ public final class TWNetOptimizerPlugin extends JavaPlugin implements Listener {
                 1200L
         );
 
-        getLogger().info("SpaceCatNetOptimizer enabled in OPTIMIZE-SAFE mode.");
+        getLogger().info("MinecraftNetOptimizer enabled in OPTIMIZE-SAFE mode.");
         getLogger().info(
                 "Latency Guardian is "
                         + (latencyGuardian.isEnabled() ? "enabled." : "disabled.")
         );
         getLogger().info(
-                "Critical client movement/attack packets are never cancelled or throttled by SpaceCatNetOptimizer."
+                "Critical client movement/attack packets are never cancelled or throttled by MinecraftNetOptimizer."
         );
         getLogger().info(
                 "Lifecycle caches are bounded and use event-driven cleanup; explicit GC is never requested."
