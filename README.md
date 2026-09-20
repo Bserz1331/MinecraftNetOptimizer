@@ -1,145 +1,207 @@
 # TWNetOptimizer
 
-TWNetOptimizer is a conservative Paper 1.20.4 / Java 17 packet profiler and network optimizer.
+Conservative network optimization and diagnostics for Paper servers.
 
-## v0.8 Network Lifecycle Bounds
+## What is TWNetOptimizer
 
-v0.8 adds bounded lifecycle state so TWNetOptimizer cannot grow its own packet-related caches indefinitely.
+TWNetOptimizer reduces avoidable packet workload and manages packet-related runtime state while prioritizing gameplay correctness and plugin compatibility.
 
-This is not a RAM cleaner and does not replace the JVM garbage collector.
+Its scope is **network lifecycle optimization / packet workload optimization**. It is not a RAM cleaner, ping booster, JVM GC manager, general-purpose TPS booster, or forced packet compressor.
 
-TWNetOptimizer never calls `System.gc()`.
+TWNetOptimizer observes packet traffic, applies conservative deduplication to safe packet classes, bounds its own diagnostic and optimizer state, and exposes server-side diagnostics through `/netdebug`.
 
-### Bounded optimizer caches
+## Features
 
-The following runtime structures now have hard limits:
+- Safe `ENTITY_METADATA` exact-state deduplication.
+- Changed-only logical UI packet deduplication with periodic refreshes.
+- Raw vs forwarded packet profiling.
+- Packet workload profiling by packet category and packet type.
+- Outbound burst detection.
+- Netty backpressure observation.
+- Main-thread handoff latency observation.
+- Combat-sensitive Latency Guardian.
+- Virtual Entity diagnostics.
+- Entity packet tracing.
+- Bounded optimizer-owned caches.
+- Global and per-player cache limits.
+- Automatic stale-state cleanup.
+- Join, quit, and world-change lifecycle cleanup.
+- Passive JVM heap observation.
+- Passive GC collection count and collection-time observation.
+- `/netdebug lifecycle` and `/netdebug lifecycle <player>` diagnostics.
 
-- ENTITY_METADATA state cache, with global and per-player limits
-- logical UI state cache, with global and per-player limits
-- particle rate windows
-- virtual entity tracking per viewer
-- entity trace counters per session
+These features reduce avoidable packet work and allocation / retention pressure. They may indirectly reduce jitter in some workloads, but they do not change physical network RTT and do not guarantee higher TPS, lower RAM usage, or better PvP latency.
 
-When an optimization cache reaches its limit, TWNetOptimizer fails open:
+## Safety / Compatibility Philosophy
 
-    new cache key arrives
-    + cache is full
-    -> do not retain the new state
-    -> forward packets normally
+TWNetOptimizer is compatibility-first:
 
-Gameplay correctness is preferred over cache hit rate.
+- No `System.gc()` calls.
+- No JVM GC configuration changes.
+- No Netty channel watermark changes.
+- No NMS or CraftBukkit version-specific hacks.
+- No inspection or mutation of third-party plugin internals.
+- No PacketEvents buffer retain / release changes outside TWNetOptimizer ownership.
+- No TCP ordering changes.
+- New optimizer and diagnostic state is bounded and has lifecycle cleanup.
+- Cache saturation is fail-open: when a cache is full, a new key is not retained and the packet is forwarded normally.
 
-A single player cannot consume the entire metadata or UI cache budget. New per-player hard limits fail open in the same way as the global limits.
+TWNetOptimizer does not actively throttle, drop, coalesce, or reorder critical gameplay traffic:
 
-Oversized or otherwise uncacheable payloads are not retained for dedupe. If a previously cached key later forwards an uncacheable payload, the old cached state is invalidated immediately so a future state transition cannot be mistaken for a duplicate.
+- Movement.
+- Attack input.
+- Entity velocity / knockback.
+- Teleport.
+- Inventory transaction / acknowledgement.
+- Chunk / world consistency.
+- Block state.
+- KeepAlive.
 
-### Lifecycle cleanup
+The optional particle limiter is disabled by default and is intended only for cosmetic particle traffic. It does not apply to the critical traffic listed above.
 
-State is released on:
+## Requirements
 
-- player quit
-- player join, to clear stale state from an abnormal previous session
-- world change for world-scoped packet/entity state
-- entity destroy where available
-- plugin disable
-- low-frequency stale-state maintenance
+- Paper server.
+- Java 17 bytecode compatibility for this build. The actual server JVM must also satisfy the Java requirement of the selected Paper version.
+- PacketEvents `2.13.0` is required for packet-level profiling and optimization.
 
-Trace results are retained briefly after a trace ends so `/netdebug entities` can still inspect them, then maintenance removes them.
+If PacketEvents is not installed or is inactive, TWNetOptimizer can load and its command surface remains available, but packet-level profiling, safe packet optimization, and Latency Guardian packet observations are disabled. `/netdebug status` reports this state.
 
-Virtual entity entries also receive stale cleanup in case a third-party packet path never produces a matching destroy packet.
+## Supported Versions
 
-### Allocation and GC policy
+Supported target: Paper 1.20–26.2
 
-v0.8 only reduces avoidable retention.
+Compile baseline: Paper 1.20.4
 
-It does not:
+Paper 1.20.4 is the primary compatibility baseline for this release. The other versions in the supported target are compatibility targets and are not represented as individually tested by this repository. Validate the selected Paper, PacketEvents, and plugin combination on a staging server before production use.
 
-- call `System.gc()`
-- alter JVM GC policy
-- change Netty channel watermarks
-- retain or release PacketEvents buffers outside TWNetOptimizer ownership
-- inspect or mutate other plugins' internal collections
+Minecraft 26.3 support depends on stable PacketEvents protocol support and compatibility verification. This release does not claim formal 26.3 support.
 
-The goal is:
+## Installation
 
-    packet-related state created
-    -> used
-    -> bounded
-    -> released
-    -> normal JVM GC
+1. Install a compatible Paper server.
+2. Install PacketEvents `2.13.0` or a verified compatible build.
+3. Copy `TWNetOptimizer-0.8.0.jar` into the server's `plugins/` directory.
+4. Start the server.
+5. Run `/netdebug status`.
+6. Run `/netdebug lifecycle` to verify optimizer-owned lifecycle state.
 
-### Combat Guardian retained
+Keep a backup and test changes on a staging server first. Existing configuration files are not forcibly overwritten; missing configuration keys use safe code defaults.
 
-v0.7 Combat Guardian remains unchanged in behavior.
+## Commands
 
-Combat mode can be activated by:
+All commands require `twnetoptimizer.admin`.
 
-- client ATTACK input
-- confirmed Bukkit entity damage dealt by a player
-- confirmed Bukkit entity damage received by a player
-- projectile damage where the shooter is a player
+```text
+/netdebug
+/netdebug status
+/netdebug top
+/netdebug server
+/netdebug advice
+/netdebug latency <player>
+/netdebug lifecycle
+/netdebug lifecycle <player>
+/netdebug trace <player> [seconds]
+/netdebug entities <player>
+/netdebug virtual <player>
+/netdebug optimize <status|on|off|reset>
+/netdebug reset
+/netdebug reload
+```
 
-Critical packet safety remains unchanged.
+`/netdebug` shows the issuing player's profile when used in-game, or server status from the console. The permission default is `op`.
 
-TWNetOptimizer does not throttle, drop, coalesce or reorder:
+## Permissions
 
-- movement
-- attack input
-- entity velocity / knockback
-- teleport
-- inventory transaction / acknowledgement
-- chunk and world consistency
-- block state
-- KeepAlive
+| Permission | Default | Description |
+| --- | --- | --- |
+| `twnetoptimizer.admin` | `op` | Use TWNetOptimizer diagnostics and optimizer controls. |
 
-TCP ordering is not modified.
+## Configuration
 
-### Existing optimizer foundations retained
+Conservative defaults are provided in `plugins/TWNetOptimizer/config.yml`:
 
-- low-allocation ENTITY_METADATA exact-state dedupe
-- logical-target UI changed-only cache
-- cache commit only after final MONITOR forwarding
-- Raw vs Forwarded packet accounting
-- Netty channel writability / backpressure observation
-- main-thread handoff latency sampling
-- virtual entity registry and entity traffic tracing
-- server diagnostics and advice engine
+- `optimizer.metadata-dedupe.enabled`: safe metadata deduplication, enabled by default.
+- `optimizer.ui-dedupe.enabled`: changed-only UI deduplication, enabled by default.
+- `optimizer.particle-throttle.enabled`: cosmetic particle limiter, disabled by default.
+- `latency-guardian.enabled`: combat-sensitive diagnostics and priority state, enabled by default.
+- `optimizer.cache.*`: global, per-player, payload-size, and stale-entry bounds.
+- `trace.*`: trace duration, result retention, entity limits, and virtual-entity limits.
+- `burst.*`: outbound packet and observed-byte burst thresholds.
 
-### Conservative defaults
+When a cache reaches a hard limit, TWNetOptimizer skips caching the new key and forwards the packet normally. Oversized or otherwise uncacheable payloads are not retained for deduplication.
 
-For new installations:
+## Lifecycle Diagnostics
 
-- metadata dedupe: ON
-- UI changed-only dedupe: ON
-- particle throttle: OFF
-- Latency Guardian: ON
-- combat window: 2500 ms
-- duplicate refresh combat deferral: max 5000 ms
-- metadata cache: max 16384 entries globally / 2048 per player
-- UI cache: max 4096 entries globally / 512 per player
-- cached payload: max 65536 bytes
-- virtual entity tracking: max 4096 entries per viewer
+`/netdebug lifecycle` reports:
 
-Existing server config files are not forcibly overwritten. Missing v0.8 keys use safe code defaults.
+- Metadata cache current size / global limit.
+- Metadata per-player limit.
+- Metadata high-water mark.
+- Metadata fail-open skips.
+- Metadata stale removals and trim removals.
+- UI cache current size / global limit.
+- UI per-player limit.
+- UI high-water mark.
+- UI fail-open skips.
+- UI stale removals and trim removals.
+- Particle windows, limit, high-water mark, skipped windows, and stale removals.
+- Entity trace sessions, active sessions, bounded entities, skips, cleanup, and trims.
+- Virtual Entity viewers, bounded entities, skips, stale removals, and trims.
+- Uncacheable payloads and old-state invalidations.
+- JVM heap used / committed / max.
+- GC collection count and accumulated collection time.
 
-Useful commands:
+`/netdebug lifecycle <player>` shows the bounded metadata, UI, particle, trace, and Virtual Entity state for one online player.
 
-    /netdebug <player>
-    /netdebug latency <player>
-    /netdebug lifecycle
-    /netdebug lifecycle <player>
-    /netdebug trace <player> 10
-    /netdebug entities <player>
-    /netdebug virtual <player>
-    /netdebug server
-    /netdebug advice
+GC metrics are observation-only. TWNetOptimizer never requests a GC.
 
-### Lifecycle verification
+## Compatibility Notes
 
-`/netdebug lifecycle` exposes current entries, configured limits, high-water marks, fail-open skips, stale removals, trace / virtual-entity retention, JVM heap used / committed / max and observed GC collection count / time. It never requests a GC.
+- PacketEvents is a soft dependency at plugin load time but a runtime requirement for packet-level features.
+- Packet listener registration uses PacketEvents and diagnostics are designed to fail safely if optional packet inspection is unavailable.
+- Critical movement, attack input, knockback, teleport, inventory acknowledgement, chunk / world consistency, block-state, and KeepAlive traffic is not actively throttled, dropped, coalesced, or reordered by this plugin.
+- No NMS or CraftBukkit version-specific implementation is required by the current release.
+- The primary compile baseline is Paper 1.20.4. Test newer and older target versions before production rollout.
 
-`/netdebug lifecycle <player>` shows the same state for one online player.
+## Troubleshooting
 
-For a live soak test, capture the command output before and after repeated join / quit, world changes and entity-heavy movement. Current state should return toward the active-player baseline after lifecycle events and stale-maintenance windows. High-water values may remain high by design because they describe peak usage.
+1. Run `/netdebug status` and confirm that PacketEvents is `active`.
+2. Run `/netdebug lifecycle` and capture the output when reporting lifecycle or retention concerns.
+3. Check the server log for PacketEvents integration errors.
+4. Confirm that the server JVM satisfies the selected Paper version's Java requirement.
+5. Temporarily disable a suspected conflicting plugin on a staging server and compare raw / forwarded profiles.
+6. Include the Paper, Java, PacketEvents, and TWNetOptimizer versions, major plugins, diagnostics output, logs, and reproduction steps in a bug report.
 
-TWNetOptimizer cannot reduce physical network RTT. Its purpose is to reduce avoidable packet work and state retention while preserving gameplay correctness first.
+TWNetOptimizer cannot repair another plugin's memory leak, guarantee a fixed RAM reduction, or prove a network RTT improvement. Use the diagnostics to isolate packet workload and lifecycle state, then verify changes with a controlled server comparison.
+
+## Building from Source
+
+The project targets Java 17 and uses Maven:
+
+```text
+mvn -B -ntp verify
+```
+
+The build filters `src/main/resources/plugin.yml` so `${project.version}` is replaced with the Maven project version. The release artifact is:
+
+```text
+target/TWNetOptimizer-0.8.0.jar
+```
+
+## License
+
+TWNetOptimizer is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+
+License: GPL-3.0
+
+## Release / Support Information
+
+This repository is being prepared for its first public release, `v0.8.0`. The release candidate is prepared through a pull request while the GitHub repository remains private.
+
+Platform-specific listing copy is available in:
+
+- [`docs/HANGAR.md`](docs/HANGAR.md)
+- [`docs/SPIGOT.md`](docs/SPIGOT.md)
+
+Please report reproducible compatibility or behavior issues with the diagnostic information requested by the issue templates. Do not describe this plugin as `Zero Lag`, `No Ping`, `FPS Boost`, `Double TPS`, `RAM Cleaner`, or `Ultimate Optimizer`.

@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible TWNetOptimizer problem
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please test on a staging server first and remove sensitive information from logs.
+  - type: input
+    id: paper-version
+    attributes:
+      label: Paper version
+      placeholder: Paper 1.20.4 build ...
+    validations:
+      required: true
+  - type: input
+    id: java-version
+    attributes:
+      label: Java version
+      placeholder: Java 17.0.x
+    validations:
+      required: true
+  - type: input
+    id: packetevents-version
+    attributes:
+      label: PacketEvents version
+      placeholder: PacketEvents 2.13.0
+    validations:
+      required: true
+  - type: input
+    id: twnetoptimizer-version
+    attributes:
+      label: TWNetOptimizer version
+      placeholder: 0.8.0
+    validations:
+      required: true
+  - type: textarea
+    id: major-plugins
+    attributes:
+      label: Other major plugins
+      description: Include plugins that observe or modify packets, entities, combat, or networking.
+    validations:
+      required: true
+  - type: textarea
+    id: status-output
+    attributes:
+      label: /netdebug status
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: lifecycle-output
+    attributes:
+      label: /netdebug lifecycle
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: error-log
+    attributes:
+      label: Error log
+      description: Include the relevant server log and stack trace.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: 1. ...
+    validations:
+      required: true
